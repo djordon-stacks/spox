@@ -1,4 +1,4 @@
-//! Contains wallets operations
+//! Contains wallet operations
 
 use std::collections::HashSet;
 

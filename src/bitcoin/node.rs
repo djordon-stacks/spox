@@ -190,11 +190,11 @@ impl BitcoinCoreClient {
 
     /// List unspent outputs tracked by the client wallet
     pub fn list_unspent(&self) -> Result<Vec<ListUnspentResultEntry>, Error> {
-        // We don't expected the watched UTXO set to grow so much that returning
+        // We don't expect the watched UTXO set to grow so much that returning
         // all the UTXOs here is going to be an issue. If it does, consider
-        // switching to filtering the UTXO by passing `addresses`. Note that we
+        // switching to filtering the UTXOs by passing `addresses`. Note that we
         // need to specify P2TR addresses, since `listunspent` requires proper
-        // addresses and not just raw scripts descriptors.
+        // addresses and not just raw script descriptors.
         self.inner
             .list_unspent(Some(1), None, None, None, None)
             .map_err(Error::BitcoinCoreRpc)
