@@ -70,6 +70,10 @@ pub enum Error {
     #[error("missing stacks configuration")]
     MissingStacksConfig,
 
+    /// Missing rescan timestamp
+    #[error("missing rescan timestamp")]
+    MissingRescanTimestamp,
+
     /// No registry contract configured
     #[error("no registry contract configured")]
     NoRegistryConfigured,
@@ -109,6 +113,10 @@ pub enum Error {
     /// Reqwest error
     #[error("response from stacks node did not conform to the expected schema: {0}")]
     UnexpectedStacksResponse(#[source] reqwest::Error),
+
+    /// Unexpected local timestamp
+    #[error("unexpected local timestamp")]
+    UnexpectedLocalTimestamp,
 
     /// Registry returned ids that do not match the requested ids
     #[error("registry returned ids that do not match the requested ids")]

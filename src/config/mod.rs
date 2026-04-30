@@ -1,8 +1,10 @@
 //! sPoX Configuration
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::SystemTime;
 
 use bitcoin::{ScriptBuf, XOnlyPublicKey};
+use bitcoincore_rpc_json::Timestamp;
 use clarity::types::chainstate::StacksAddress;
 use clarity::vm::types::{PrincipalData, QualifiedContractIdentifier};
 use config::{Config, Environment, File};
@@ -59,6 +61,10 @@ pub struct Settings {
     pub registry_contract: Option<QualifiedContractIdentifier>,
     /// Stacks config, used only for some CLI commands and for the registry contract
     pub stacks: Option<StacksConfig>,
+    /// Bitcoin core wallet managed by spox
+    pub bitcoin_wallet: Option<String>,
+    /// Timestamp used for rescans, if a wallet is used.
+    pub bitcoin_wallet_rescan_timestamp: Option<i64>,
 }
 
 /// Stacks related config.
@@ -118,7 +124,31 @@ impl Settings {
             return Err(SpoxConfigError::MissingStacksConfig);
         }
 
+        if self.bitcoin_wallet.is_some() ^ self.bitcoin_wallet_rescan_timestamp.is_some() {
+            return Err(SpoxConfigError::BitcoinWalletConfigMismatch);
+        }
+
         Ok(())
+    }
+
+    /// Get the rescan timestamp to be used when importing descriptors
+    pub fn get_rescan_timestamp(&self) -> Result<Timestamp, crate::error::Error> {
+        let timestamp = self
+            .bitcoin_wallet_rescan_timestamp
+            .ok_or(crate::error::Error::MissingRescanTimestamp)?;
+
+        if timestamp >= 0 {
+            return Ok(Timestamp::Time(timestamp as u64));
+        }
+
+        let Ok(current_timestamp) = SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return Err(crate::error::Error::UnexpectedLocalTimestamp);
+        };
+
+        let current_timestamp = current_timestamp.as_secs();
+        Ok(Timestamp::Time(
+            current_timestamp.saturating_add_signed(timestamp),
+        ))
     }
 }
 
