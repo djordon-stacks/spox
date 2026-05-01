@@ -131,6 +131,12 @@ impl Settings {
             return Err(SpoxConfigError::MissingStacksConfig);
         }
 
+        if let Some(ref wallet) = self.node_wallet
+            && wallet.name.trim().is_empty()
+        {
+            return Err(SpoxConfigError::EmptyBitcoinWalletName);
+        }
+
         Ok(())
     }
 }
@@ -266,5 +272,17 @@ mod tests {
             .as_secs()
             .saturating_sub(100);
         assert!(timestamp.abs_diff(config_timestamp) <= 2);
+    }
+
+    #[test]
+    fn empty_wallet_name() {
+        clear_env();
+
+        set_var("SPOX_NODE_WALLET__NAME", "");
+
+        assert!(matches!(
+            Settings::new_from_default_config(),
+            Err(SpoxConfigError::EmptyBitcoinWalletName)
+        ));
     }
 }

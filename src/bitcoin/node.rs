@@ -52,18 +52,9 @@ impl BitcoinCoreClient {
     pub fn from_config(url: &Url, wallet: Option<&str>) -> Result<Self, Error> {
         let username = url.username().to_string();
         let password = url.password().unwrap_or_default().to_string();
-        let host = url
-            .host_str()
-            .ok_or(Error::InvalidUrl(url::ParseError::EmptyHost))?;
-        let port = url.port().ok_or(Error::PortRequired)?;
+        let endpoint = build_endpoint(url, wallet)?;
 
-        let wallet_suffix = match wallet {
-            Some(name) => format!("/wallet/{name}"),
-            None => "".to_owned(),
-        };
-        let endpoint = format!("{}://{host}:{port}{wallet_suffix}", url.scheme());
-
-        Self::new(&endpoint, username, password)
+        Self::new(endpoint.as_str(), username, password)
     }
 
     /// Return a bitcoin-core RPC client. Will error if the URL is an invalid URL.
@@ -198,5 +189,42 @@ impl BitcoinCoreClient {
         self.inner
             .list_unspent(Some(1), None, None, None, None)
             .map_err(Error::BitcoinCoreRpc)
+    }
+}
+
+fn build_endpoint(url: &Url, wallet: Option<&str>) -> Result<Url, Error> {
+    let host = url
+        .host_str()
+        .ok_or(Error::InvalidUrl(url::ParseError::EmptyHost))?;
+    let port = url.port().ok_or(Error::PortRequired)?;
+
+    let mut endpoint =
+        Url::parse(&format!("{}://{host}:{port}", url.scheme())).map_err(Error::InvalidUrl)?;
+
+    if let Some(name) = wallet {
+        endpoint
+            .path_segments_mut()
+            .expect("URL is parsed from a base URL")
+            .extend(["wallet", name]);
+    }
+
+    Ok(endpoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use test_case::test_case;
+
+    use super::*;
+
+    #[test_case(None, "http://devnet:18443/"; "no wallet")]
+    #[test_case(Some("spox-watch"), "http://devnet:18443/wallet/spox-watch"; "simple")]
+    #[test_case(Some("spox watch"), "http://devnet:18443/wallet/spox%20watch"; "space")]
+    #[test_case(Some("a/b"), "http://devnet:18443/wallet/a%2Fb"; "slash")]
+    #[test_case(Some("a?b#c"), "http://devnet:18443/wallet/a%3Fb%23c"; "other reserved")]
+    fn build_endpoint_percent_encodes_wallet_name(wallet: Option<&str>, expected: &str) {
+        let url = Url::parse("http://devnet:devnet@devnet:18443").unwrap();
+        let endpoint = build_endpoint(&url, wallet).unwrap();
+        assert_eq!(endpoint.as_str(), expected);
     }
 }

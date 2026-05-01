@@ -30,7 +30,6 @@ bitcoin_rpc_endpoint = "http://devnet:devnet@127.0.0.1:18443"
 # !! ===========================================================================
 [node_wallet]
 # Bitcoin core wallet name for monitored addresses; spox will create and manage this wallet.
-# The wallet name MUST be URL-safe (no spaces, slashes, or other reserved characters).
 #
 # Required: true
 # Environment: SPOX_NODE_WALLET__NAME
