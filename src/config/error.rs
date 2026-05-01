@@ -15,8 +15,4 @@ pub enum SpoxConfigError {
     /// An error returned during parsing and building the configuration object
     #[error("cannot parse and build configuration: {0}")]
     ConfigError(#[from] ConfigError),
-
-    /// bitcoin_wallet and bitcoin_wallet_rescan_timestamp must either be both set or unset
-    #[error("bitcoin_wallet and bitcoin_wallet_rescan_timestamp must either be both set or unset")]
-    BitcoinWalletConfigMismatch,
 }

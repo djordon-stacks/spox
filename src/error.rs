@@ -70,10 +70,6 @@ pub enum Error {
     #[error("missing stacks configuration")]
     MissingStacksConfig,
 
-    /// Missing rescan timestamp
-    #[error("missing rescan timestamp")]
-    MissingRescanTimestamp,
-
     /// No registry contract configured
     #[error("no registry contract configured")]
     NoRegistryConfigured,

@@ -103,3 +103,16 @@ pub fn import_descriptors(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use test_case::test_case;
+
+    use super::*;
+
+    #[test_case("raw(0123)#abcd", "raw(0123)"; "with checksum")]
+    #[test_case("raw(0123)", "raw(0123)"; "no checksum")]
+    fn strip_checksum_works(input: &str, expected: &str) {
+        assert_eq!(strip_checksum(input), expected);
+    }
+}

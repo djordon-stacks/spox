@@ -90,7 +90,7 @@ impl DepositMonitor {
         chain_tip: &BlockRef,
     ) -> Result<Vec<Utxo>, Error> {
         let bitcoin = self.context.bitcoin_client();
-        if self.context.settings().bitcoin_wallet.is_none() {
+        if self.context.settings().node_wallet.is_none() {
             // TODO: batch the scan_tx_out_set call
             return bitcoin.scan_tx_out_set(script_pubkeys);
         }

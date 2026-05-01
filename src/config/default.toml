@@ -10,24 +10,6 @@ emily_endpoint = "http://127.0.0.1:3031"
 # Environment: SPOX_BITCOIN_RPC_ENDPOINT
 bitcoin_rpc_endpoint = "http://devnet:devnet@127.0.0.1:18443"
 
-# Bitcoin core wallet name for monitored addresses; spox will create and manage this wallet.
-# If commented out, spox will not create or use a wallet and will rely on `scantxoutset` instead.
-# The wallet name MUST be URL-safe (no spaces, slashes, or other reserved characters).
-#
-# Required: false
-# Environment: SPOX_BITCOIN_WALLET
-bitcoin_wallet = "spox-watch"
-
-# Timestamp from which to start rescanning the blockchain, if using a Bitcoin core wallet.
-# Use 0 to scan the entire blockchain.
-# Negative values can be used to specify offsets from current local timestamp
-# (e.g., -3600 to use `now - 1 hour`)
-# If `bitcoin_wallet` is provided, this is required.
-#
-# Required: false
-# Environment: SPOX_BITCOIN_WALLET_RESCAN_TIMESTAMP
-bitcoin_wallet_rescan_timestamp = 1767225600 # Jan 1 2026
-
 # Polling interval in seconds
 #
 # Required: false
@@ -39,6 +21,29 @@ bitcoin_wallet_rescan_timestamp = 1767225600 # Jan 1 2026
 # Required: false
 # Environment: SPOX_REGISTRY_CONTRACT
 # registry_contract = "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.registry"
+
+# !! ===========================================================================
+# !! Wallet configuration
+# !! ---------------------------------------------------------------------------
+# !! Bitcoin core wallet used to track monitored addresses. If this stanza is
+# !! omitted, spox will use `scantxoutset` to look for UTXOs
+# !! ===========================================================================
+[node_wallet]
+# Bitcoin core wallet name for monitored addresses; spox will create and manage this wallet.
+# The wallet name MUST be URL-safe (no spaces, slashes, or other reserved characters).
+#
+# Required: true
+# Environment: SPOX_NODE_WALLET__NAME
+name = "spox-watch"
+
+# Timestamp from which to start rescanning the blockchain when importing new descriptors.
+# Use 0 to scan the entire blockchain.
+# Negative values can be used to specify offsets from current local timestamp.
+# (e.g., -3600 to use `now - 1 hour`)
+#
+# Required: true
+# Environment: SPOX_NODE_WALLET__RESCAN_TIMESTAMP
+rescan_timestamp = 1767225600 # Jan 1 2026
 
 # !! ===========================================================================
 # !! Monitored deposits

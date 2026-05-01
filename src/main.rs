@@ -260,7 +260,7 @@ async fn get_registry_address(
 }
 
 fn update_wallet(context: &Context) -> Result<(), Error> {
-    if context.settings().bitcoin_wallet.is_none() {
+    let Some(ref wallet) = context.settings().node_wallet else {
         return Ok(());
     };
 
@@ -269,17 +269,17 @@ fn update_wallet(context: &Context) -> Result<(), Error> {
         return Ok(());
     }
 
-    let timestamp = context.settings().get_rescan_timestamp()?;
+    let timestamp = wallet.get_rescan_timestamp()?;
 
     import_descriptors(context.bitcoin_client(), &script_pubkeys, timestamp)
 }
 
 fn setup_wallet(context: &Context) -> Result<(), Error> {
-    let Some(ref wallet) = context.settings().bitcoin_wallet else {
+    let Some(ref wallet) = context.settings().node_wallet else {
         return Ok(());
     };
 
-    load_or_create_wallet(context.bitcoin_client(), wallet)
+    load_or_create_wallet(context.bitcoin_client(), &wallet.name)
 }
 
 #[tokio::main]

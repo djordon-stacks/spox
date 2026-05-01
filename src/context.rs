@@ -27,7 +27,7 @@ impl TryFrom<&Settings> for Context {
     fn try_from(value: &Settings) -> Result<Self, Self::Error> {
         let bitcoin_client = BitcoinCoreClient::from_config(
             &value.bitcoin_rpc_endpoint,
-            value.bitcoin_wallet.as_deref(),
+            value.node_wallet.as_ref().map(|w| w.name.as_str()),
         )?;
         let emily_config = EmilyConfig {
             base_path: value
