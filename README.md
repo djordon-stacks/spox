@@ -33,6 +33,14 @@ note that the entry in the config is still required (but not used).
 A Stacks node is required if using an on-chain registry and for some subcommands;
 can be omitted from the config if not used.
 
+To monitor the deposit addresses, `spox` can either use the `scantxoutset` RPC or a Bitcoin core watch-only wallet.
+- `scantxoutset`: doesn't require managing wallet state on the node but each scan can take a couple of minutes and may
+  conflict with other scans already happening.
+- watch-only wallet: can take some time to rescan when adding new addresses but after that each query is instantaneous.
+
+The default config uses a wallet; note that you shouldn't create the wallet on the node, `spox` will manage it.
+The wallet can then be removed by deleting the wallet directory under Bitcoin Core's `wallets/` folder.
+
 ### Get signers xonly public key
 
 When configuring a deposit, you must specify the sBTC signers' public key using the `signers_xonly` field in the config.
@@ -96,16 +104,29 @@ cargo run -p signer --bin demo-cli donation
 
 ### Configured deposits
 
-Edit `signer/src/bin/demo_cli.rs`, `exec_deposit` to return after `send_raw_transaction` but before `create_deposit`
- 
-Now, in no particular order:
- - Start spox (overwriting the devenv aggregate key; or edit the config with the value returned from `get-signers-xonly-key`)
-   ```bash
-   SPOX_DEPOSIT__DEMO__SIGNERS_XONLY=$(RUST_LOG=info cargo run -- -c src/config/default.toml get-signers-xonly-key) RUST_LOG=debug cargo run -- -c src/config/default.toml
-   ```
- - Create a deposit (without notifying emily): `cargo run -p signer --bin demo-cli deposit --amount 123456` (from sBTC)
+The commands below fetch and overwrite the devenv aggregate key; as an alternative,
+edit the config with the value returned from `get-signers-xonly-key`.
 
-This will look for deposits made to the signers pubkey with the devenv default values. Once the tx is confirmed it should appear on Emily, assuming it didn't expire in the meantime, and be processed by the signers, assuming the amount is not too low to be ignored.
+Get the deposit address from the config:
+```bash
+SPOX_DEPOSIT__DEMO__SIGNERS_XONLY=$(RUST_LOG=info cargo run -- -c src/config/default.toml get-signers-xonly-key) RUST_LOG=debug cargo run -- -c src/config/default.toml get-deposit-address -n regtest
+```
+It will output something like `demo: bcrt1pny4nsp7vsrj7nmgy3mu0dq3cxpzxr4ez7eyzkpupmum7mq4h94asm7t0dx`.
+
+Send a payment to the deposit address above:
+```bash
+# From sBTC codebase
+cargo run -p signer --bin demo-cli fund-btc --recipient <deposit address>
+```
+
+Start `spox` (this can happen before or after the above payment):
+```bash
+SPOX_DEPOSIT__DEMO__SIGNERS_XONLY=$(RUST_LOG=info cargo run -- -c src/config/default.toml get-signers-xonly-key) RUST_LOG=debug cargo run -- -c src/config/default.toml
+```
+
+This will look for deposits made to the signers pubkey with the devenv default values.
+Once the tx is confirmed it should appear on Emily, assuming it didn't expire in the meantime,
+and be processed by the signers, assuming the amount is not too low to be ignored.
 
 ### On-chain registry
 
