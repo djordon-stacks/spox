@@ -30,8 +30,7 @@ See `src/config/default.toml` for a config starting point.
 A Bitcoin node is required to run the binary (monitoring mode), while it is not used for specific CLI commands;
 note that the entry in the config is still required (but not used).
 
-A Stacks node is required if using an on-chain registry and for some subcommands;
-can be omitted from the config if not used.
+A Stacks node is required when using an on-chain registry or by certain subcommands. It can be omitted otherwise.
 
 To monitor the deposit addresses, `spox` can either use the `scantxoutset` RPC or a Bitcoin core watch-only wallet.
 - `scantxoutset`: doesn't require managing wallet state on the node but each scan can take a couple of minutes and may
@@ -102,6 +101,8 @@ make devenv-up
 cargo run -p signer --bin demo-cli donation
 ```
 
+Now you need to specify the monitored deposit addresses either in the configuration file or via the on-chain registry.
+
 ### Configured deposits
 
 The commands below fetch and overwrite the devenv aggregate key; as an alternative,
@@ -140,6 +141,10 @@ Run spox (the registry is specified in the configuration file):
 cargo run -- -c tests/registry/spox.toml
 ```
 
+Now register an address on the registry either manually or via the web app.
+
+#### Manual registration
+
 Register an address on the registry:
 ```bash
 # Get the signers xonly key via (in sBTC codebase): `cargo run -p signer --bin demo-cli info`
@@ -156,12 +161,31 @@ Get the Bitcoin address for the registered address:
 cargo run -- -c tests/registry/spox.toml get-registry-address 0 -n regtest
 ```
 
+#### Web app
+
+In `webapp/` there is a simple web app to interact with the registry. See [webapp/README.md](webapp/README.md) for more details.
+
+Run the web app:
+```bash
+(cd webapp && pnpm dev)
+```
+
+Fund your wallet, e.g. (from sBTC codebase):
+```bash
+# Change the address to the wallet you will use with the web app
+cargo run -p signer --bin demo-cli fund-stx --recipient ST2FQWJMF9CGPW34ZWK8FEPNK072NEV1VKRNBBMJ9
+```
+
+Use the web app at http://localhost:3001 to create and register your address.
+After a bit, `spox` should log about the new address.
+
+#### Complete the deposit
+
 Finally, send a payment to the above address (e.g.):
 ```bash
 # From sBTC codebase
 cargo run -p signer --bin demo-cli fund-btc --recipient bcrt1p3q78wuc2pvxrcal3dgwld94fd45khf08m3fekwk8p4s2tw68p8cqsn3nqy
 ```
-
 After a bit `spox` should notice the payment to the deposit address and it will notify Emily;
 then the sBTC signers will fulfill it.
 
