@@ -3,6 +3,7 @@
 use bitcoin;
 
 pub mod node;
+pub mod wallet;
 
 /// Bitcoin chain tip
 #[derive(Debug, PartialEq, Eq)]

@@ -1,8 +1,10 @@
 //! sPoX Configuration
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bitcoin::{ScriptBuf, XOnlyPublicKey};
+use bitcoincore_rpc_json::Timestamp;
 use clarity::types::chainstate::StacksAddress;
 use clarity::vm::types::{PrincipalData, QualifiedContractIdentifier};
 use config::{Config, Environment, File};
@@ -59,6 +61,8 @@ pub struct Settings {
     pub registry_contract: Option<QualifiedContractIdentifier>,
     /// Stacks config, used only for some CLI commands and for the registry contract
     pub stacks: Option<StacksConfig>,
+    /// Bitcoin core wallet config
+    pub node_wallet: Option<BitcoinCoreWalletConfig>,
 }
 
 /// Stacks related config.
@@ -70,6 +74,20 @@ pub struct StacksConfig {
     /// The address of the deployer of the sBTC smart contracts.
     #[serde(deserialize_with = "stacks_address_deserializer")]
     pub sbtc_deployer: StacksAddress,
+}
+
+/// Bitcoin core wallet config.
+#[derive(Deserialize, Clone, Debug)]
+pub struct BitcoinCoreWalletConfig {
+    /// Bitcoin core wallet name, managed by spox
+    pub name: String,
+    /// Timestamp used for rescans when importing new descriptors.
+    ///
+    /// Non-negative values are UNIX timestamps (in seconds); `0` scans from
+    /// genesis.
+    /// Negative values can be used to specify offsets from current UNIX
+    /// timestamp (e.g., `-3600` to use `now - 1 hour`).
+    pub rescan_timestamp: i64,
 }
 
 impl Settings {
@@ -118,7 +136,33 @@ impl Settings {
             return Err(SpoxConfigError::MissingStacksConfig);
         }
 
+        if let Some(ref wallet) = self.node_wallet
+            && wallet.name.trim().is_empty()
+        {
+            return Err(SpoxConfigError::EmptyBitcoinWalletName);
+        }
+
         Ok(())
+    }
+}
+
+impl BitcoinCoreWalletConfig {
+    /// Get the rescan timestamp to be used when importing descriptors:
+    /// non-negative values of `rescan_timestamp` are treated as UNIX timestamps,
+    /// negative values are treated as offsets from the current UNIX timestamp.
+    pub fn get_rescan_timestamp(&self) -> Result<Timestamp, crate::error::Error> {
+        if self.rescan_timestamp >= 0 {
+            return Ok(Timestamp::Time(self.rescan_timestamp as u64));
+        }
+
+        let Ok(current_timestamp) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return Err(crate::error::Error::UnexpectedLocalTimestamp);
+        };
+
+        let current_timestamp = current_timestamp.as_secs();
+        Ok(Timestamp::Time(
+            current_timestamp.saturating_add_signed(self.rescan_timestamp),
+        ))
     }
 }
 
@@ -213,6 +257,54 @@ mod tests {
         assert!(matches!(
             Settings::new_from_default_config(),
             Err(SpoxConfigError::ConfigError(_))
+        ));
+    }
+
+    #[test_case(4933574768; "year 2126")]
+    #[test_case(100; "100")]
+    #[test_case(0; "0")]
+    fn non_negative_timestamp(timestamp: u64) {
+        clear_env();
+
+        set_var("SPOX_NODE_WALLET__RESCAN_TIMESTAMP", timestamp.to_string());
+        let config = Settings::new_from_default_config().unwrap();
+
+        assert_eq!(
+            config.node_wallet.unwrap().get_rescan_timestamp().unwrap(),
+            Timestamp::Time(timestamp)
+        );
+    }
+
+    #[test]
+    fn negative_timestamp() {
+        clear_env();
+
+        set_var("SPOX_NODE_WALLET__RESCAN_TIMESTAMP", "-100");
+        let config = Settings::new_from_default_config().unwrap();
+
+        let Timestamp::Time(config_timestamp) =
+            config.node_wallet.unwrap().get_rescan_timestamp().unwrap()
+        else {
+            panic!("wrong timestamp")
+        };
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(100);
+        assert!(timestamp.abs_diff(config_timestamp) <= 2);
+    }
+
+    #[test]
+    fn empty_wallet_name() {
+        clear_env();
+
+        set_var("SPOX_NODE_WALLET__NAME", "");
+
+        assert!(matches!(
+            Settings::new_from_default_config(),
+            Err(SpoxConfigError::EmptyBitcoinWalletName)
         ));
     }
 }

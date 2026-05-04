@@ -1,9 +1,10 @@
 //! Module to monitor for pending deposits
 
+use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::str::FromStr as _;
 
-use bitcoin::{BlockHash, Txid};
+use bitcoin::{BlockHash, ScriptBuf, Txid};
 use emily_client::models::CreateDepositRequestBody;
 use lru::LruCache;
 
@@ -83,6 +84,48 @@ impl DepositMonitor {
         })
     }
 
+    fn get_utxos(
+        &self,
+        script_pubkeys: &[ScriptBuf],
+        chain_tip: &BlockRef,
+    ) -> Result<Vec<Utxo>, Error> {
+        let bitcoin = self.context.bitcoin_client();
+        if self.context.settings().node_wallet.is_none() {
+            // TODO: batch the scan_tx_out_set call
+            return bitcoin.scan_tx_out_set(script_pubkeys);
+        }
+
+        let watched_script_pubkeys: HashSet<&ScriptBuf> = script_pubkeys.iter().collect();
+
+        let utxos = bitcoin
+            .list_unspent()?
+            .into_iter()
+            .filter_map(|unspent| {
+                if !watched_script_pubkeys.contains(&unspent.script_pub_key) {
+                    return None;
+                }
+                // Note that if a new block is observed between when we fetched
+                // the chain tip and the UTXOs, this computation may be off by
+                // one block: this is fine, we will fail to find the transaction
+                // in the expected block and try again at the next block.
+                // 1 confirmation means the UTXO is confirmed on chain tip.
+                let block_height = chain_tip
+                    .block_height
+                    .saturating_sub(unspent.confirmations.saturating_sub(1) as u64);
+
+                Some(Utxo {
+                    txid: unspent.txid,
+                    vout: unspent.vout,
+                    script_pub_key: unspent.script_pub_key,
+                    amount: unspent.amount,
+                    block_height,
+                })
+            })
+            .collect();
+
+        Ok(utxos)
+    }
+
     /// Check pending deposits confirmed to the monitored addresses
     pub fn get_pending_deposits(
         &mut self,
@@ -92,9 +135,7 @@ impl DepositMonitor {
         if script_pubkeys.is_empty() {
             return Ok(Vec::new());
         }
-
-        // TODO: batch the get_utxos call
-        let utxos = self.context.bitcoin_client().get_utxos(&script_pubkeys)?;
+        let utxos = self.get_utxos(&script_pubkeys, chain_tip)?;
 
         let create_deposits = utxos
             .iter()

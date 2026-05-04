@@ -5,6 +5,7 @@ use bitcoin::Address;
 use clap::{Parser, Subcommand, ValueEnum};
 use emily_client::apis::deposit_api;
 use spox::bitcoin::BlockRef;
+use spox::bitcoin::wallet::{import_descriptors, load_or_create_wallet};
 use spox::config::Settings;
 use spox::context::Context;
 use spox::deposit_monitor::DepositMonitor;
@@ -185,6 +186,13 @@ async fn runloop(
             )
         });
 
+        let _ = update_wallet(&context).inspect_err(|error| {
+            tracing::warn!(
+                %error,
+                "error updating the wallet"
+            )
+        });
+
         let _ = fetch_and_create_deposits(&context, deposit_monitor, &chain_tip)
             .await
             .inspect_err(|error| {
@@ -251,6 +259,29 @@ async fn get_registry_address(
     Ok(())
 }
 
+fn update_wallet(context: &Context) -> Result<(), Error> {
+    let Some(ref wallet) = context.settings().node_wallet else {
+        return Ok(());
+    };
+
+    let script_pubkeys = context.storage().get_scripts()?;
+    if script_pubkeys.is_empty() {
+        return Ok(());
+    }
+
+    let timestamp = wallet.get_rescan_timestamp()?;
+
+    import_descriptors(context.bitcoin_client(), &script_pubkeys, timestamp)
+}
+
+fn setup_wallet(context: &Context) -> Result<(), Error> {
+    let Some(ref wallet) = context.settings().node_wallet else {
+        return Ok(());
+    };
+
+    load_or_create_wallet(context.bitcoin_client(), &wallet.name)
+}
+
 #[tokio::main]
 #[tracing::instrument(name = "spox")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -289,6 +320,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for monitored_deposit in monitored {
         store.add(monitored_deposit)?;
     }
+
+    setup_wallet(&context)?;
 
     let mut deposit_monitor = DepositMonitor::new(context.clone());
 

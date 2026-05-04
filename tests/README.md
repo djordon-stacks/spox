@@ -13,7 +13,6 @@ The scripts in `tests/` require `pnpm`.
 Install the required dependencies for the demo:
 
 ```bash
-cd tests
 pnpm install --frozen-lockfile
 ```
 

@@ -110,6 +110,10 @@ pub enum Error {
     #[error("response from stacks node did not conform to the expected schema: {0}")]
     UnexpectedStacksResponse(#[source] reqwest::Error),
 
+    /// Unexpected local timestamp
+    #[error("unexpected local timestamp")]
+    UnexpectedLocalTimestamp,
+
     /// Registry returned ids that do not match the requested ids
     #[error("registry returned ids that do not match the requested ids")]
     MismatchingRawAddressIds,

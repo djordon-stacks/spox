@@ -12,6 +12,10 @@ pub enum SpoxConfigError {
     #[error("missing required stacks config")]
     MissingStacksConfig,
 
+    /// Empty Bitcoin wallet name
+    #[error("empty bitcoin wallet name")]
+    EmptyBitcoinWalletName,
+
     /// An error returned during parsing and building the configuration object
     #[error("cannot parse and build configuration: {0}")]
     ConfigError(#[from] ConfigError),
