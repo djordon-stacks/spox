@@ -260,6 +260,21 @@ mod tests {
         ));
     }
 
+    #[test_case(4933574768; "year 2126")]
+    #[test_case(100; "100")]
+    #[test_case(0; "0")]
+    fn non_negative_timestamp(timestamp: u64) {
+        clear_env();
+
+        set_var("SPOX_NODE_WALLET__RESCAN_TIMESTAMP", timestamp.to_string());
+        let config = Settings::new_from_default_config().unwrap();
+
+        assert_eq!(
+            config.node_wallet.unwrap().get_rescan_timestamp().unwrap(),
+            Timestamp::Time(timestamp)
+        );
+    }
+
     #[test]
     fn negative_timestamp() {
         clear_env();
