@@ -81,7 +81,12 @@ pub struct StacksConfig {
 pub struct BitcoinCoreWalletConfig {
     /// Bitcoin core wallet name, managed by spox
     pub name: String,
-    /// Timestamp used for rescans when importing new descriptors
+    /// Timestamp used for rescans when importing new descriptors.
+    /// 
+    /// Non-negative values are UNIX timestamps (in seconds); `0` scans from
+    /// genesis.
+    /// Negative values can be used to specify offsets from current UNIX
+    /// timestamp (e.g., `-3600` to use `now - 1 hour`).
     pub rescan_timestamp: i64,
 }
 
@@ -142,7 +147,9 @@ impl Settings {
 }
 
 impl BitcoinCoreWalletConfig {
-    /// Get the rescan timestamp to be used when importing descriptors
+    /// Get the rescan timestamp to be used when importing descriptors:
+    /// non-negative values of `rescan_timestamp` are treated as UNIX timestamps,
+    /// negative values are treated as offsets from the current UNIX timestamp.
     pub fn get_rescan_timestamp(&self) -> Result<Timestamp, crate::error::Error> {
         if self.rescan_timestamp >= 0 {
             return Ok(Timestamp::Time(self.rescan_timestamp as u64));

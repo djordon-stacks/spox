@@ -37,8 +37,8 @@ name = "spox-watch"
 
 # Timestamp from which to start rescanning the blockchain when importing new descriptors.
 # Use 0 to scan the entire blockchain.
-# Negative values can be used to specify offsets from current local timestamp.
-# (e.g., -3600 to use `now - 1 hour`)
+# Negative values can be used to specify offsets from current UNIX timestamp
+# (e.g., -3600 to use `now - 1 hour`).
 #
 # Required: true
 # Environment: SPOX_NODE_WALLET__RESCAN_TIMESTAMP
