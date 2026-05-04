@@ -82,7 +82,7 @@ pub struct BitcoinCoreWalletConfig {
     /// Bitcoin core wallet name, managed by spox
     pub name: String,
     /// Timestamp used for rescans when importing new descriptors.
-    /// 
+    ///
     /// Non-negative values are UNIX timestamps (in seconds); `0` scans from
     /// genesis.
     /// Negative values can be used to specify offsets from current UNIX
