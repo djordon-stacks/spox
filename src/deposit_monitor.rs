@@ -93,7 +93,7 @@ impl DepositMonitor {
         if self.context.settings().node_wallet.is_none() {
             if bitcoin.scan_tx_out_set_scanning()? {
                 tracing::warn!(
-                    "scan already in progress, attempting a new one will fail; skipping fetching UTXOs"
+                    "scan already in progress, attempting a new one will fail; skipping fetching utxos"
                 );
                 return Err(Error::ScanAlreadyInProgress);
             }
