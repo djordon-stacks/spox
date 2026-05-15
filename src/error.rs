@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use bitcoin::ScriptBuf;
+use bitcoincore_rpc::jsonrpc;
 
 /// Top-level application error
 #[derive(Debug, thiserror::Error)]
@@ -13,7 +14,7 @@ pub enum Error {
 
     /// Error when creating an RPC client to bitcoin-core
     #[error("could not create RPC client to {1}: {0}")]
-    BitcoinCoreRpcClient(#[source] bitcoincore_rpc::Error, String),
+    BitcoinCoreRpcClient(#[source] jsonrpc::http::simple_http::Error, String),
 
     /// Could not serialize the clarity value to bytes.
     ///
@@ -89,6 +90,10 @@ pub enum Error {
     /// sBTC error
     #[error(transparent)]
     Sbtc(#[from] sbtc::error::Error),
+
+    /// Scan already in progress
+    #[error("scan already in progress")]
+    ScanAlreadyInProgress,
 
     /// A call to `scantxoutset` failed
     #[error("a call to `scantxoutset` failed")]

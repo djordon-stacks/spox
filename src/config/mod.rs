@@ -47,6 +47,9 @@ pub struct Settings {
     /// Bitcoin RPC endpoint
     #[serde(deserialize_with = "url_deserializer")]
     pub bitcoin_rpc_endpoint: Url,
+    /// Bitcoin RPC timeout
+    #[serde(deserialize_with = "duration_seconds_deserializer")]
+    pub bitcoin_rpc_timeout: std::time::Duration,
     /// Emily API endpoint
     #[serde(deserialize_with = "url_deserializer")]
     pub emily_endpoint: Url,
@@ -111,6 +114,7 @@ impl Settings {
         let mut cfg_builder = Config::builder();
 
         cfg_builder = cfg_builder.set_default("polling_interval", 30)?;
+        cfg_builder = cfg_builder.set_default("bitcoin_rpc_timeout", 60 * 5)?;
 
         if let Some(path) = config_path {
             cfg_builder = cfg_builder.add_source(File::from(path.as_ref()));
@@ -130,6 +134,11 @@ impl Settings {
     fn validate(&self) -> Result<(), SpoxConfigError> {
         if self.polling_interval.is_zero() {
             return Err(SpoxConfigError::ZeroDurationForbidden("polling_interval"));
+        }
+        if self.bitcoin_rpc_timeout.is_zero() {
+            return Err(SpoxConfigError::ZeroDurationForbidden(
+                "bitcoin_rpc_timeout",
+            ));
         }
 
         if self.registry_contract.is_some() && self.stacks.is_none() {
@@ -199,6 +208,7 @@ mod tests {
             parse_url("http://devnet:devnet@127.0.0.1:18443")
         );
         assert_eq!(settings.polling_interval, Duration::from_secs(30));
+        assert_eq!(settings.bitcoin_rpc_timeout, Duration::from_mins(5));
         assert!(settings.registry_contract.is_none());
     }
 
@@ -227,6 +237,7 @@ mod tests {
     }
 
     #[test_case("polling_interval"; "polling interval")]
+    #[test_case("bitcoin_rpc_timeout"; "bitcoin rpc timeout")]
     fn zero_values_for_nonzero_fields_fail_in_config(field: &str) {
         clear_env();
 

@@ -10,6 +10,13 @@ emily_endpoint = "http://127.0.0.1:3031"
 # Environment: SPOX_BITCOIN_RPC_ENDPOINT
 bitcoin_rpc_endpoint = "http://devnet:devnet@127.0.0.1:18443"
 
+# Timeout for the Bitcoin Core RPC client. If configured to use `scantxoutset`,
+# this must be long enough for the RPC to finish the UTXO set scan.
+#
+# Required: false
+# Environment: SPOX_BITCOIN_RPC_TIMEOUT
+# bitcoin_rpc_timeout = 300
+
 # Polling interval in seconds
 #
 # Required: false
