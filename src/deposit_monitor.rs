@@ -91,8 +91,23 @@ impl DepositMonitor {
     ) -> Result<Vec<Utxo>, Error> {
         let bitcoin = self.context.bitcoin_client();
         if self.context.settings().node_wallet.is_none() {
+            if bitcoin.scan_tx_out_set_scanning()? {
+                tracing::warn!(
+                    "scan already in progress, attempting a new one will fail; skipping fetching utxos"
+                );
+                return Err(Error::ScanAlreadyInProgress);
+            }
+
             // TODO: batch the scan_tx_out_set call
-            return bitcoin.scan_tx_out_set(script_pubkeys);
+            return bitcoin
+                .scan_tx_out_set(script_pubkeys)
+                .inspect_err(|error| {
+                    if matches!(error, Error::ScanAlreadyInProgress) {
+                        tracing::warn!(
+                            "scan didn't finish in time, consider increasing the rpc timeout"
+                        )
+                    }
+                });
         }
 
         let watched_script_pubkeys: HashSet<&ScriptBuf> = script_pubkeys.iter().collect();

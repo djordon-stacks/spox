@@ -1,10 +1,11 @@
 //! Contains client wrappers for bitcoin core
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bitcoin::ScriptBuf;
-use bitcoincore_rpc::jsonrpc::serde_json;
-use bitcoincore_rpc::{Auth, RpcApi};
+use bitcoincore_rpc::RpcApi;
+use bitcoincore_rpc::jsonrpc::{serde_json, simple_http};
 use bitcoincore_rpc_json::{
     GetChainTipsResultStatus, GetDescriptorInfoResult, ImportDescriptors, ImportMultiResult,
     ListUnspentResultEntry, LoadWalletResult, ScanTxOutRequest, Utxo as RpcUtxo,
@@ -49,21 +50,31 @@ pub struct BitcoinCoreClient {
 
 impl BitcoinCoreClient {
     /// Return a bitcoin-core RPC client from a auth-embedded URL and optional wallet name
-    pub fn from_config(url: &Url, wallet: Option<&str>) -> Result<Self, Error> {
+    pub fn from_config(url: &Url, wallet: Option<&str>, timeout: Duration) -> Result<Self, Error> {
         let username = url.username().to_string();
         let password = url.password().unwrap_or_default().to_string();
         let endpoint = build_endpoint(url, wallet)?;
 
-        Self::new(endpoint.as_str(), username, password)
+        Self::new(endpoint.as_str(), username, password, timeout)
     }
 
     /// Return a bitcoin-core RPC client. Will error if the URL is an invalid URL.
-    pub fn new(url: &str, username: String, password: String) -> Result<Self, Error> {
-        let auth = Auth::UserPass(username, password);
-        let client = bitcoincore_rpc::Client::new(url, auth)
-            .map_err(|err| Error::BitcoinCoreRpcClient(err, url.to_string()))?;
+    pub fn new(
+        url: &str,
+        username: String,
+        password: String,
+        timeout: Duration,
+    ) -> Result<Self, Error> {
+        let transport = simple_http::Builder::new()
+            .url(url)
+            .map_err(|error| Error::BitcoinCoreRpcClient(error, url.to_string()))?
+            .auth(username, Some(password))
+            .timeout(timeout)
+            .build();
 
-        Ok(Self { inner: Arc::new(client) })
+        let client = Arc::new(bitcoincore_rpc::Client::from_jsonrpc(transport.into()));
+
+        Ok(Self { inner: client })
     }
 
     /// Get the canonical chain tip
@@ -92,16 +103,30 @@ impl BitcoinCoreClient {
             .map(|addr| ScanTxOutRequest::Single(format!("raw({})", addr.to_hex_string())))
             .collect::<Vec<_>>();
 
-        let result = self
-            .inner
-            .scan_tx_out_set_blocking(&descriptors)
-            .map_err(Error::BitcoinCoreRpc)?;
+        let result =
+            self.inner
+                .scan_tx_out_set_blocking(&descriptors)
+                .map_err(|error| match error {
+                    bitcoincore_rpc::Error::JsonRpc(bitcoincore_rpc::jsonrpc::Error::Rpc(
+                        rpc_error,
+                    )) if rpc_error.code == -8 => Error::ScanAlreadyInProgress,
+                    e => Error::BitcoinCoreRpc(e),
+                })?;
 
         if result.success != Some(true) {
             return Err(Error::ScanTxOutFailure);
         }
 
         Ok(result.unspents.into_iter().map(Into::into).collect())
+    }
+
+    /// Return true if a `scantxoutset` scan is already in progress
+    pub fn scan_tx_out_set_scanning(&self) -> Result<bool, Error> {
+        // scantxoutset status returns null when no scan is running
+        self.inner
+            .call("scantxoutset", &["status".into()])
+            .map_err(Error::BitcoinCoreRpc)
+            .map(|res: serde_json::Value| !res.is_null())
     }
 
     /// Get the canonical block hash for a given block height

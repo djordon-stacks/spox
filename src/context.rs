@@ -28,6 +28,7 @@ impl TryFrom<&Settings> for Context {
         let bitcoin_client = BitcoinCoreClient::from_config(
             &value.bitcoin_rpc_endpoint,
             value.node_wallet.as_ref().map(|w| w.name.as_str()),
+            value.bitcoin_rpc_timeout,
         )?;
         let emily_config = EmilyConfig {
             base_path: value
