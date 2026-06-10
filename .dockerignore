@@ -1,0 +1,10 @@
+.git
+.gitmodules
+.gitworktrees
+
+node_modules
+target
+
+contracts
+tests
+webapp

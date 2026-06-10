@@ -1,0 +1,119 @@
+## GitHub workflow to build a multiarch Docker image
+
+name: GHCR Release Image (Binary)
+
+on:
+  repository_dispatch:
+    types: [image_build_and_draft_release]
+
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+  packages: write
+
+## Define which docker arch to build for
+env:
+  docker_platforms: "linux/amd64,linux/arm64"
+  latest_release: $(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r .tag_name)
+
+concurrency:
+  group: docker-image-${{ github.head_ref || github.ref || github.run_id }}
+  ## Always cancel duplicate jobs
+  cancel-in-progress: true
+
+run-name: "Build and Release spox ${{ github.event.client_payload.tag_name }} Docker Image"
+
+jobs:
+  image:
+    name: Build Image
+    outputs:
+      spox: ${{ steps.save_digest.outputs.spox }}
+    runs-on: ubuntu-latest
+    environment: "Publish to GHCR"
+    steps:
+      - name: Log in to GHCR
+        id: ghcr_login
+        uses: stacks-sbtc/actions/docker/login-action@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      ## Checkout the branch of the release provided.
+      ## This requires that a release branch exists for the tag.
+      - name: Checkout Repository
+        id: checkout_repository
+        uses: stacks-sbtc/actions/checkout@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          ref: refs/tags/${{ github.event.client_payload.tag_name }}
+
+      - name: Setup Buildx
+        id: setup_buildx
+        uses: stacks-sbtc/actions/docker/setup-buildx-action@ed353a33594a2fa97ea6702d838e4a935cce374d
+
+      ## default to a docker-org of the repo owner (i.e. github user id)
+      ## this allows forks to run the docker push workflows without having to hardcode a dockerhub org (but it does require docker hub user to match github username)
+      - name: Set Local env vars
+        id: set_env
+        run: |
+          echo "ghcr_org=ghcr.io/${{ github.repository_owner }}" >> "$GITHUB_ENV"
+
+      ## Set docker metatdata
+      - name: Docker Metadata
+        id: docker_metadata
+        uses: stacks-sbtc/actions/docker/metadata-action@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          images: |
+            ${{ env.ghcr_org }}/spox
+          tags: |
+            type=raw,value=${{ github.event.client_payload.tag_name }}
+            type=raw,value=latest,enable=${{ env.latest_release == github.event.client_payload.tag_name }}
+
+      ## Build docker image for release
+      - name: Build and Push
+        id: docker_build
+        uses: stacks-sbtc/actions/docker/build-push-action@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          file: ./.github/actions/Dockerfile
+          platforms: ${{ env.docker_platforms }}
+          tags: ${{ steps.docker_metadata.outputs.tags }}
+          labels: ${{ steps.docker_metadata.outputs.labels }}
+          target: spox
+          push: true
+
+      - name: Save digest as output
+        id: save_digest
+        run: echo "spox=${{ steps.docker_build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate artifact attestation
+        id: generate_attestation
+        uses: stacks-sbtc/actions/attest-build-provenance@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          subject-name: ${{ env.ghcr_org }}/spox
+          subject-digest: ${{ steps.docker_build.outputs.digest }}
+
+      - name: Download artifact attestation
+        id: download_attestation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation download oci://${{ env.ghcr_org }}/spox:${{ github.event.client_payload.tag_name }} -R ${{ github.repository_owner }}/spox
+          
+          # Rename the attestation bundle (replace ":" with "_")
+          ATTESTATION_FILE="$(echo "${{ steps.docker_build.outputs.digest }}.jsonl" | tr ':' '_')"
+          mv "${{ steps.docker_build.outputs.digest }}.jsonl" "$ATTESTATION_FILE"
+          echo "ATTESTATION_FILE=$ATTESTATION_FILE" >> $GITHUB_ENV
+          
+          # Generate trusted root
+          gh attestation trusted-root > trusted_root.jsonl
+
+      - name: Upload Attestation Files as Artifacts
+        id: upload_attestation
+        uses: stacks-sbtc/actions/upload-artifact@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          name: attestation-files-${{ github.event.client_payload.tag_name }}
+          overwrite: true
+          path: |
+            ${{ env.ATTESTATION_FILE }}
+            trusted_root.jsonl

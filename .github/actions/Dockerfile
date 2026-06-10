@@ -1,0 +1,54 @@
+FROM --platform=$BUILDPLATFORM rust:1.94.1-slim-trixie AS build
+
+ARG TARGETARCH
+
+# Install build dependencies.
+# clang/libclang-dev: needed by bindgen (used by p256k1).
+# Cross-compilers for both target architectures.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang \
+    libclang-dev \
+    git \
+    pkg-config \
+    g++ \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu \
+    findutils \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Add the Rust target for the target architecture.
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+        rustup target add aarch64-unknown-linux-gnu; \
+    else \
+        rustup target add x86_64-unknown-linux-gnu; \
+    fi
+
+WORKDIR /code/spox
+COPY . .
+
+# Build the binary, cross-compiling for the target architecture.
+RUN export LIBCLANG_PATH="$(find /usr/lib/llvm-* -name lib -type d | head -n 1)" && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        export TARGET="aarch64-unknown-linux-gnu" && \
+        export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
+        export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ && \
+        export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar && \
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc; \
+    else \
+        export TARGET="x86_64-unknown-linux-gnu" && \
+        export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc && \
+        export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
+        export AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar && \
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc; \
+    fi && \
+    cargo build --target "$TARGET" --bin spox --release --locked && \
+    mkdir -p /output && \
+    cp "target/$TARGET/release/spox" /output/spox
+
+FROM debian:trixie-slim AS spox
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /output/spox /usr/local/bin/spox
+
+ENTRYPOINT ["/usr/local/bin/spox"]
