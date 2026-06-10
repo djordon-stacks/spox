@@ -56,7 +56,7 @@ jobs:
             if (!semverRegex.test(tag)) {
               core.setFailed(`Error: Invalid tag format: "${tag}". Expected SemVer like X.Y.Z, vX.Y.Z-note, or X.Y.Z+note`);
             } else {
-              github.rest.git.createRef({
+              await github.rest.git.createRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 ref: `refs/tags/${tag}`,

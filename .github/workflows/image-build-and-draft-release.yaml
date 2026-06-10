@@ -1,4 +1,4 @@
-## Github workflow to build a multiarch docker image from pre-built binaries
+## GitHub workflow to build a multiarch Docker image
 
 name: GHCR Release Image (Binary)
 
@@ -52,12 +52,10 @@ jobs:
         id: setup_buildx
         uses: stacks-sbtc/actions/docker/setup-buildx-action@ed353a33594a2fa97ea6702d838e4a935cce374d
 
-      ## if the repo owner is not `stacks-network`, default to a docker-org of the repo owner (i.e. github user id)
+      ## default to a docker-org of the repo owner (i.e. github user id)
       ## this allows forks to run the docker push workflows without having to hardcode a dockerhub org (but it does require docker hub user to match github username)
       - name: Set Local env vars
         id: set_env
-        if: |
-          github.repository_owner != 'stacks-network'
         run: |
           echo "ghcr_org=ghcr.io/${{ github.repository_owner }}" >> "$GITHUB_ENV"
 
