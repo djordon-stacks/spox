@@ -77,16 +77,6 @@ plan:
   - id: 1
     transactions:
     - transaction-type: emulated-contract-publish
-      contract-name: mock-pox-5
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/mock-pox-5.clar
-      clarity-version: 6
-    - transaction-type: emulated-contract-publish
-      contract-name: mock-sbtc-registry
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/mock-sbtc-registry.clar
-      clarity-version: 6
-    - transaction-type: emulated-contract-publish
       contract-name: sweeper-traits
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/sweeper-traits.clar
