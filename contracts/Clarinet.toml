@@ -15,11 +15,42 @@ cache_dir = "./.cache"
 
 [repl.analysis]
 passes = ["check_checker"]
-check_checker = { trusted_sender = false, trusted_caller = false, callee_filter = false }
+# check_checker = { trusted_sender = true, trusted_caller = false, callee_filter = true }
+
+[repl.analysis.check_checker]
+trusted_sender = true
+trusted_caller = false
+callee_filter = true
+strict = false
 
 [contracts]
 
 [contracts.registry]
 path = "contracts/registry.clar"
-clarity_version = 5
-epoch = "3.4"
+clarity_version = 6
+epoch = 4.0
+
+[contracts.sweeper-traits]
+path = "contracts/sweeper-traits.clar"
+clarity_version = 6
+epoch = 4.0
+
+[contracts.pox-5]
+path = "contracts/pox-5.clar"
+clarity_version = 6
+epoch = 4.0
+
+[contracts.sbtc-registry]
+path = "contracts/sbtc-registry.clar"
+clarity_version = 6
+epoch = 4.0
+
+[contracts.sweep-registry]
+path = "contracts/sweep-registry.clar"
+clarity_version = 6
+epoch = 4.0
+
+[contracts.mock-signer-manager]
+path = "contracts/mock-signer-manager.clar"
+clarity_version = 6
+epoch = 4.0
