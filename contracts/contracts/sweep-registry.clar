@@ -203,17 +203,17 @@
 (define-read-only (get-position (staker principal) (bond-index (optional uint)))
     (match bond-index
         idx
-        (match (contract-call? .pox-5 get-bond-membership staker)
+        (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-membership staker)
             membership (if (is-eq (get bond-index membership) idx)
                 (some {
                     signer: (get signer membership),
-                    first-reward-cycle: (contract-call? .pox-5 bond-period-to-reward-cycle idx),
+                    first-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle idx),
                 })
                 none
             )
             none
         )
-        (match (contract-call? .pox-5 get-staker-info staker)
+        (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-staker-info staker)
             info (some {
                 signer: (get signer info),
                 first-reward-cycle: (get first-reward-cycle info),
@@ -296,7 +296,7 @@
         ;; is read once here and threaded through the fold.
         (ok (get rows (fold due-sweeps-step DUE_TICKS {
             node: start,
-            cur-dist-cycle: (contract-call? .pox-5 current-distribution-cycle),
+            cur-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
             rows: (list),
         })))
     )
@@ -340,7 +340,7 @@
         (num-sweeps uint)
     )
     (let (
-            (current-reward (contract-call? .pox-5 current-pox-reward-cycle))
+            (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
             (position (unwrap! (get-position staker bond-index) ERR_NO_CURRENT_POSITION))
             (key { staker: staker, signer-manager: signer })
         )
@@ -515,7 +515,7 @@
             ;; rewards for it are already pulled in (get-earned == u0); otherwise
             ;; claim-rewards must run first, so surface the error unchanged
             (if (and (is-eq err-code SM_ERR_NO_CLAIMABLE_REWARDS)
-                     (is-eq (contract-call? .pox-5 get-earned (contract-of signer-manager) reward-cycle bond-index) u0))
+                     (is-eq (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-earned (contract-of signer-manager) reward-cycle bond-index) u0))
                 (begin
                     (advance-registration key registration cur-reward-cycle cur-dist-cycle)
                     (print {
@@ -561,8 +561,8 @@
 ;; #[allow(unchecked_data)]
 (define-public (perform-sweep (staker principal) (signer-manager <sweeper-signer-manager-trait>))
     (perform-sweep-impl staker signer-manager
-        (contract-call? .pox-5 current-pox-reward-cycle)
-        (contract-call? .pox-5 current-distribution-cycle)
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle)
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle)
     )
 )
 
@@ -580,8 +580,8 @@
     (ok (get swept
         (fold count-sweep stakers {
             signer-manager: signer-manager,
-            cur-reward-cycle: (contract-call? .pox-5 current-pox-reward-cycle),
-            cur-dist-cycle: (contract-call? .pox-5 current-distribution-cycle),
+            cur-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle),
+            cur-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
             swept: u0,
         })
     ))
@@ -718,7 +718,7 @@
             (current (unwrap! (map-get? pending-withdrawals key) ERR_UNKNOWN_PENDING_WITHDRAWAL))
             (fold-result (fold pending-withdrawal-fold-step current
                 { target: request-id, found: false, kept: (list) }))
-            (request (unwrap! (contract-call? .sbtc-registry get-withdrawal-request request-id)
+            (request (unwrap! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-withdrawal-request request-id)
                 ERR_UNKNOWN_PENDING_WITHDRAWAL))
         )
         (asserts! (get found fold-result) ERR_UNKNOWN_PENDING_WITHDRAWAL)

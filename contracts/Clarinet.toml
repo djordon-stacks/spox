@@ -5,6 +5,26 @@ authors = []
 telemetry = false
 cache_dir = "./.cache"
 
+# The sBTC contracts are fetched from mainnet and deployed at their real
+# addresses -- the exact principals that pox-5, signer-manager, and
+# sweep-registry reference. Sources are cached in `cache_dir`, so only the
+# first fetch needs network access.
+[[project.requirements]]
+contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry"
+
+[[project.requirements]]
+contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token"
+
+[[project.requirements]]
+contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal"
+
+# Deploy the real pox-5 as the boot contract, so that
+# 'ST000000000000000000002AMW42H.pox-5 resolves. Both signer-manager (which
+# impl-traits pox-5.signer-manager-trait) and sweep-registry call that principal,
+# so this is what makes them share one pox-5 instance.
+[project.override_boot_contracts_source]
+pox-5 = "contracts/pox-5.clar"
+
 # Check-checker settings:
 # trusted_sender: if true, inputs are trusted after tx_sender has been checked.
 # trusted_caller: if true, inputs are trusted after contract-caller has been checked.
@@ -25,6 +45,8 @@ strict = false
 
 [contracts]
 
+# --- spox contracts ---
+
 [contracts.registry]
 path = "contracts/registry.clar"
 clarity_version = 6
@@ -35,20 +57,23 @@ path = "contracts/sweeper-traits.clar"
 clarity_version = 6
 epoch = 4.0
 
-[contracts.pox-5]
-path = "contracts/pox-5.clar"
-clarity_version = 6
-epoch = 4.0
-
-[contracts.sbtc-registry]
-path = "contracts/sbtc-registry.clar"
-clarity_version = 6
-epoch = 4.0
-
 [contracts.sweep-registry]
 path = "contracts/sweep-registry.clar"
 clarity_version = 6
 epoch = 4.0
+
+# --- Reference contracts from stacks-core, for integration tests ---
+# pox-5 is deliberately NOT listed under [contracts]: it is deployed by
+# `override_boot_contracts_source` above.
+
+[contracts.signer-manager]
+path = "contracts/signer-manager.clar"
+clarity_version = 6
+epoch = 4.0
+
+# --- Mocks, for fast unit tests ---
+# mock-signer-manager is passed to perform-sweep / settle-pending-withdrawal as a
+# trait argument, so it can be used per-test alongside the real signer-manager.
 
 [contracts.mock-signer-manager]
 path = "contracts/mock-signer-manager.clar"
