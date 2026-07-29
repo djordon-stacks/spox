@@ -48,11 +48,20 @@
 (map-set admins tx-sender true)
 
 (define-data-var fee-per-sweep uint u100000) ;; 0.1 STX, burned per sweep bought at registration
-(define-data-var registration-ll-head (optional { staker: principal, signer-manager: principal }) none)
-(define-data-var registration-ll-tail (optional { staker: principal, signer-manager: principal }) none)
+(define-data-var registration-ll-head (optional {
+    staker: principal,
+    signer-manager: principal,
+}) none)
+(define-data-var registration-ll-tail (optional {
+    staker: principal,
+    signer-manager: principal,
+}) none)
 
 (define-map registrations
-    { staker: principal, signer-manager: principal }
+    {
+        staker: principal,
+        signer-manager: principal,
+    }
     {
         bond-index: (optional uint),
         remaining-sweeps: uint,
@@ -62,30 +71,73 @@
 )
 
 (define-map registration-ll
-    { staker: principal, signer-manager: principal }
     {
-        prev: (optional { staker: principal, signer-manager: principal }),
-        next: (optional { staker: principal, signer-manager: principal }),
+        staker: principal,
+        signer-manager: principal,
+    }
+    {
+        prev: (optional {
+            staker: principal,
+            signer-manager: principal,
+        }),
+        next: (optional {
+            staker: principal,
+            signer-manager: principal,
+        }),
     }
 )
 
 (define-map pending-withdrawals
-    { staker: principal, signer-manager: principal }
+    {
+        staker: principal,
+        signer-manager: principal,
+    }
     (list 192 uint)
 )
 
 (define-map pending-withdrawal-ll
-    { staker: principal, signer-manager: principal }
     {
-        prev: (optional { staker: principal, signer-manager: principal }),
-        next: (optional { staker: principal, signer-manager: principal }),
+        staker: principal,
+        signer-manager: principal,
+    }
+    {
+        prev: (optional {
+            staker: principal,
+            signer-manager: principal,
+        }),
+        next: (optional {
+            staker: principal,
+            signer-manager: principal,
+        }),
     }
 )
-(define-data-var pending-withdrawal-ll-head (optional { staker: principal, signer-manager: principal }) none)
-(define-data-var pending-withdrawal-ll-tail (optional { staker: principal, signer-manager: principal }) none)
+(define-data-var pending-withdrawal-ll-head (optional {
+    staker: principal,
+    signer-manager: principal,
+}) none)
+(define-data-var pending-withdrawal-ll-tail (optional {
+    staker: principal,
+    signer-manager: principal,
+}) none)
 
-(define-private (min-uint (left uint) (right uint)) (if (<= left right) left right))
-(define-private (max-uint (left uint) (right uint)) (if (>= left right) left right))
+(define-private (min-uint
+        (left uint)
+        (right uint)
+    )
+    (if (<= left right)
+        left
+        right
+    )
+)
+(define-private (max-uint
+        (left uint)
+        (right uint)
+    )
+    (if (>= left right)
+        left
+        right
+    )
+)
 
 ;; --- Doubly-linked-list maintenance over registration-ll ---
 ;; The list lets get-due-sweeps walk every live registration without a global
@@ -97,13 +149,21 @@
 ;; match on the neighbor read avoids a runtime panic: the entry is always
 ;; present (it is the current tail), and the false arm is unreachable.
 ;; #[allow(unchecked_data)]
-(define-private (ll-append (key { staker: principal, signer-manager: principal }))
+(define-private (ll-append (key {
+    staker: principal,
+    signer-manager: principal,
+}))
     (let ((old-tail (var-get registration-ll-tail)))
-        (map-set registration-ll key { prev: old-tail, next: none })
+        (map-set registration-ll key {
+            prev: old-tail,
+            next: none,
+        })
         (match old-tail
-            tail-key (match (map-get? registration-ll tail-key)
+            tail-key
+            (match (map-get? registration-ll tail-key)
                 tail-links (map-set registration-ll tail-key (merge tail-links { next: (some key) }))
-                false)
+                false
+            )
             ;; empty list: this node is also the head
             (var-set registration-ll-head (some key))
         )
@@ -114,20 +174,24 @@
 ;; Splice `key` out of the list, fixing up its neighbors' links and the
 ;; head/tail vars. No-op if `key` isn't in the list.
 ;; #[allow(unchecked_data)]
-(define-private (ll-remove (key { staker: principal, signer-manager: principal }))
+(define-private (ll-remove (key {
+    staker: principal,
+    signer-manager: principal,
+}))
     (match (map-get? registration-ll key)
-        links
-        (begin
+        links (begin
             (match (get prev links)
                 prev-key (match (map-get? registration-ll prev-key)
                     prev-links (map-set registration-ll prev-key (merge prev-links { next: (get next links) }))
-                    false)
+                    false
+                )
                 (var-set registration-ll-head (get next links))
             )
             (match (get next links)
                 next-key (match (map-get? registration-ll next-key)
                     next-links (map-set registration-ll next-key (merge next-links { prev: (get prev links) }))
-                    false)
+                    false
+                )
                 (var-set registration-ll-tail (get prev links))
             )
             (map-delete registration-ll key)
@@ -142,13 +206,20 @@
 
 ;; Append `key` at the tail of the pending-withdrawal list.
 ;; #[allow(unchecked_data)]
-(define-private (pending-ll-append (key { staker: principal, signer-manager: principal }))
+(define-private (pending-ll-append (key {
+    staker: principal,
+    signer-manager: principal,
+}))
     (let ((old-tail (var-get pending-withdrawal-ll-tail)))
-        (map-set pending-withdrawal-ll key { prev: old-tail, next: none })
+        (map-set pending-withdrawal-ll key {
+            prev: old-tail,
+            next: none,
+        })
         (match old-tail
             tail-key (match (map-get? pending-withdrawal-ll tail-key)
                 tail-links (map-set pending-withdrawal-ll tail-key (merge tail-links { next: (some key) }))
-                false)
+                false
+            )
             (var-set pending-withdrawal-ll-head (some key))
         )
         (var-set pending-withdrawal-ll-tail (some key))
@@ -157,20 +228,28 @@
 
 ;; Splice `key` out of the pending-withdrawal list.
 ;; #[allow(unchecked_data)]
-(define-private (pending-ll-remove (key { staker: principal, signer-manager: principal }))
+(define-private (pending-ll-remove (key {
+    staker: principal,
+    signer-manager: principal,
+}))
     (match (map-get? pending-withdrawal-ll key)
-        links
-        (begin
+        links (begin
             (match (get prev links)
                 prev-key (match (map-get? pending-withdrawal-ll prev-key)
-                    prev-links (map-set pending-withdrawal-ll prev-key (merge prev-links { next: (get next links) }))
-                    false)
+                    prev-links (map-set pending-withdrawal-ll prev-key
+                        (merge prev-links { next: (get next links) })
+                    )
+                    false
+                )
                 (var-set pending-withdrawal-ll-head (get next links))
             )
             (match (get next links)
                 next-key (match (map-get? pending-withdrawal-ll next-key)
-                    next-links (map-set pending-withdrawal-ll next-key (merge next-links { prev: (get prev links) }))
-                    false)
+                    next-links (map-set pending-withdrawal-ll next-key
+                        (merge next-links { prev: (get prev links) })
+                    )
+                    false
+                )
                 (var-set pending-withdrawal-ll-tail (get prev links))
             )
             (map-delete pending-withdrawal-ll key)
@@ -184,10 +263,16 @@
 ;; having this re-read `current-distribution-cycle` per node during a walk.
 ;; Used by get-due-sweeps.
 (define-private (is-due
-        (registration { remaining-sweeps: uint, last-swept-dist-cycle: (optional uint), bond-index: (optional uint), next-reward-cycle: uint })
+        (registration {
+            remaining-sweeps: uint,
+            last-swept-dist-cycle: (optional uint),
+            bond-index: (optional uint),
+            next-reward-cycle: uint,
+        })
         (cur-dist-cycle uint)
     )
-    (and (> (get remaining-sweeps registration) u0)
+    (and
+        (> (get remaining-sweeps registration) u0)
         (not (is-eq (get last-swept-dist-cycle registration) (some cur-dist-cycle)))
     )
 )
@@ -200,14 +285,18 @@
 ;;   first-reward-cycle the position's first reward cycle, used to set where
 ;;                      a new registration starts sweeping.
 ;; Used only at registration; sweeps key off {staker, signer-manager}.
-(define-read-only (get-position (staker principal) (bond-index (optional uint)))
+(define-read-only (get-position
+        (staker principal)
+        (bond-index (optional uint))
+    )
     (match bond-index
-        idx
-        (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-membership staker)
+        idx (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-membership staker)
             membership (if (is-eq (get bond-index membership) idx)
                 (some {
                     signer: (get signer membership),
-                    first-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle idx),
+                    first-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle
+                        idx
+                    ),
                 })
                 none
             )
@@ -232,35 +321,45 @@
 (define-private (due-sweeps-step
         (tick_ uint)
         (acc {
-            node: (optional { staker: principal, signer-manager: principal }),
-            cur-dist-cycle: uint,
-            rows: (list 100 {
-                signer-manager: principal,
+            node: (optional {
                 staker: principal,
-                bond-index: (optional uint),
-                reward-cycle: uint,
+                signer-manager: principal,
             }),
+            cur-dist-cycle: uint,
+            rows: (list 100
+                {
+                    signer-manager: principal,
+                    staker: principal,
+                    bond-index: (optional uint),
+                    reward-cycle: uint,
+                }
+            ),
         })
     )
     (match (get node acc)
         key
         (let ((next-node (match (map-get? registration-ll key)
-                    links (get next links)
-                    none)))
+                links (get next links)
+                none
+            )))
             (match (map-get? registrations key)
-                registration (if (is-due registration (get cur-dist-cycle acc))
+                registration
+                (if (is-due registration (get cur-dist-cycle acc))
                     (merge acc {
                         node: next-node,
-                        rows: (default-to (get rows acc) (as-max-len?
-                            (append (get rows acc) {
-                                signer-manager: (get signer-manager key),
-                                staker: (get staker key),
-                                bond-index: (get bond-index registration),
-                                reward-cycle: (get next-reward-cycle registration),
-                            })
-                            u100)),
+                        rows: (default-to (get rows acc)
+                            (as-max-len?
+                                (append (get rows acc) {
+                                    signer-manager: (get signer-manager key),
+                                    staker: (get staker key),
+                                    bond-index: (get bond-index registration),
+                                    reward-cycle: (get next-reward-cycle registration),
+                                })
+                                u100
+                            )),
                     })
-                    (merge acc { node: next-node }))
+                    (merge acc { node: next-node })
+                )
                 ;; A live linked-list node with no registration should never
                 ;; happen; skip it defensively rather than aborting the read.
                 (merge acc { node: next-node })
@@ -281,24 +380,31 @@
 ;;   reward-cycle   the cycle this registration's next claim targets.
 ;; Paginate by passing the last row's {staker, signer-manager} as the next
 ;; `cursor`; done when a page comes back short.
-(define-read-only (get-due-sweeps (cursor (optional { staker: principal, signer-manager: principal })))
+(define-read-only (get-due-sweeps (cursor (optional {
+    staker: principal,
+    signer-manager: principal,
+})))
     (let (
             ;; Resume just after `cursor` (the last key the caller handled),
             ;; or start at the head on the first page.
             (start (match cursor
                 cursor-key (match (map-get? registration-ll cursor-key)
                     links (get next links)
-                    none)
-                (var-get registration-ll-head)))
+                    none
+                )
+                (var-get registration-ll-head)
+            ))
         )
         ;; DUE_TICKS is the elided (list 100 uint) that bounds the walk to at
         ;; most DUE_PAGE_SIZE node visits per call. `current-distribution-cycle`
         ;; is read once here and threaded through the fold.
-        (ok (get rows (fold due-sweeps-step DUE_TICKS {
-            node: start,
-            cur-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
-            rows: (list),
-        })))
+        (ok (get rows
+            (fold due-sweeps-step DUE_TICKS {
+                node: start,
+                cur-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
+                rows: (list),
+            })
+        ))
     )
 )
 
@@ -319,7 +425,10 @@
 ;; Bookkeeping only. Remove the registration at `key`, splice out its
 ;; linked-list node, and return the sweeps it had left.
 ;; #[allow(unchecked_data)]
-(define-private (destroy-registration (key { staker: principal, signer-manager: principal }))
+(define-private (destroy-registration (key {
+    staker: principal,
+    signer-manager: principal,
+}))
     (let ((registration (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED)))
         (map-delete registrations key)
         (ll-remove key)
@@ -342,7 +451,10 @@
     (let (
             (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
             (position (unwrap! (get-position staker bond-index) ERR_NO_CURRENT_POSITION))
-            (key { staker: staker, signer-manager: signer })
+            (key {
+                staker: staker,
+                signer-manager: signer,
+            })
         )
         (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
         (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
@@ -420,10 +532,19 @@
     )
     (let (
             (caller tx-sender)
-            (carried (try! (destroy-registration { staker: caller, signer-manager: old-signer-manager })))
+            (carried (try! (destroy-registration {
+                staker: caller,
+                signer-manager: old-signer-manager,
+            })))
         )
         (try! (create-registration caller new-signer-manager new-bond-index carried))
-        (print { topic: "update-registration", staker: caller, old-signer-manager: old-signer-manager, new-signer-manager: new-signer-manager, num-sweeps: carried })
+        (print {
+            topic: "update-registration",
+            staker: caller,
+            old-signer-manager: old-signer-manager,
+            new-signer-manager: new-signer-manager,
+            num-sweeps: carried,
+        })
         (ok carried)
     )
 )
@@ -435,8 +556,16 @@
 ;; ok and empty-cycle paths of perform-sweep-impl.
 ;; #[allow(unchecked_data)]
 (define-private (advance-registration
-        (key { staker: principal, signer-manager: principal })
-        (registration { bond-index: (optional uint), remaining-sweeps: uint, next-reward-cycle: uint, last-swept-dist-cycle: (optional uint) })
+        (key {
+            staker: principal,
+            signer-manager: principal,
+        })
+        (registration {
+            bond-index: (optional uint),
+            remaining-sweeps: uint,
+            next-reward-cycle: uint,
+            last-swept-dist-cycle: (optional uint),
+        })
         (cur-reward-cycle uint)
         (cur-dist-cycle uint)
     )
@@ -452,7 +581,8 @@
                     remaining-sweeps: (- (get remaining-sweeps registration) u1),
                     next-reward-cycle: (if (> cur-reward-cycle (get next-reward-cycle registration))
                         (+ (get next-reward-cycle registration) u1)
-                        (get next-reward-cycle registration)),
+                        (get next-reward-cycle registration)
+                    ),
                     last-swept-dist-cycle: (some cur-dist-cycle),
                 })
             )
@@ -486,19 +616,27 @@
         (cur-dist-cycle uint)
     )
     (let (
-            (key { staker: staker, signer-manager: (contract-of signer-manager) })
+            (key {
+                staker: staker,
+                signer-manager: (contract-of signer-manager),
+            })
             (registration (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED))
             (reward-cycle (get next-reward-cycle registration))
             (bond-index (get bond-index registration))
         )
         (asserts! (> (get remaining-sweeps registration) u0) ERR_NOT_REGISTERED)
-        (asserts! (not (is-eq (get last-swept-dist-cycle registration) (some cur-dist-cycle))) ERR_ALREADY_SWEPT)
+        (asserts! (not (is-eq (get last-swept-dist-cycle registration) (some cur-dist-cycle)))
+            ERR_ALREADY_SWEPT
+        )
         (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
             claim-result
             ;; paid: advance and record any L1 withdrawal for later settlement
             (let ((withdrawal-request (get withdrawal-request claim-result)))
                 (advance-registration key registration cur-reward-cycle cur-dist-cycle)
-                (match withdrawal-request id (try! (append-pending-withdrawal key id)) true)
+                (match withdrawal-request
+                    id (try! (append-pending-withdrawal key id))
+                    true
+                )
                 (print {
                     topic: "perform-sweep",
                     staker: staker,
@@ -514,8 +652,15 @@
             ;; nothing to claim: step past the cycle only if the signer's
             ;; rewards for it are already pulled in (get-earned == u0); otherwise
             ;; claim-rewards must run first, so surface the error unchanged
-            (if (and (is-eq err-code SM_ERR_NO_CLAIMABLE_REWARDS)
-                     (is-eq (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-earned (contract-of signer-manager) reward-cycle bond-index) u0))
+            (if (and
+                    (is-eq err-code SM_ERR_NO_CLAIMABLE_REWARDS)
+                    (is-eq
+                        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-earned
+                            (contract-of signer-manager) reward-cycle bond-index
+                        )
+                        u0
+                    )
+                )
                 (begin
                     (advance-registration key registration cur-reward-cycle cur-dist-cycle)
                     (print {
@@ -539,7 +684,10 @@
 ;; Splices key into pending-withdrawal-ll if this is its first pending item.
 ;; #[allow(unchecked_data)]
 (define-private (append-pending-withdrawal
-        (key { staker: principal, signer-manager: principal })
+        (key {
+            staker: principal,
+            signer-manager: principal,
+        })
         (request-id uint)
     )
     (let (
@@ -548,7 +696,10 @@
             (updated (unwrap! (as-max-len? (append current request-id) u192) ERR_TOO_MANY_PENDING))
         )
         (map-set pending-withdrawals key updated)
-        (if was-empty (pending-ll-append key) true)
+        (if was-empty
+            (pending-ll-append key)
+            true
+        )
         (ok true)
     )
 )
@@ -559,7 +710,10 @@
 ;; `get-due-sweeps`. Reads pox-5's current cycles and delegates to
 ;; perform-sweep-impl. Returns the withdrawal request-id, if one was initiated.
 ;; #[allow(unchecked_data)]
-(define-public (perform-sweep (staker principal) (signer-manager <sweeper-signer-manager-trait>))
+(define-public (perform-sweep
+        (staker principal)
+        (signer-manager <sweeper-signer-manager-trait>)
+    )
     (perform-sweep-impl staker signer-manager
         (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle)
         (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle)
@@ -600,8 +754,9 @@
             swept: uint,
         })
     )
-    (match (perform-sweep-impl staker (get signer-manager state)
-                (get cur-reward-cycle state) (get cur-dist-cycle state))
+    (match (perform-sweep-impl staker (get signer-manager state) (get cur-reward-cycle state)
+        (get cur-dist-cycle state)
+    )
         ok-val (merge state { swept: (+ (get swept state) u1) })
         err-code state
     )
@@ -617,29 +772,38 @@
 (define-private (due-settlements-step
         (tick_ uint)
         (acc {
-            node: (optional { staker: principal, signer-manager: principal }),
-            rows: (list 100 {
+            node: (optional {
                 staker: principal,
                 signer-manager: principal,
-                request-ids: (list 192 uint),
             }),
+            rows: (list 100
+                {
+                    staker: principal,
+                    signer-manager: principal,
+                    request-ids: (list 192 uint),
+                }
+            ),
         })
     )
     (match (get node acc)
         key
         (let ((next-node (match (map-get? pending-withdrawal-ll key)
-                    links (get next links)
-                    none)))
+                links (get next links)
+                none
+            )))
             (match (map-get? pending-withdrawals key)
-                request-ids (merge acc {
+                request-ids
+                (merge acc {
                     node: next-node,
-                    rows: (default-to (get rows acc) (as-max-len?
-                        (append (get rows acc) {
-                            staker: (get staker key),
-                            signer-manager: (get signer-manager key),
-                            request-ids: request-ids,
-                        })
-                        u100)),
+                    rows: (default-to (get rows acc)
+                        (as-max-len?
+                            (append (get rows acc) {
+                                staker: (get staker key),
+                                signer-manager: (get signer-manager key),
+                                request-ids: request-ids,
+                            })
+                            u100
+                        )),
                 })
                 ;; A linked-list node with no pending entry should never happen;
                 ;; skip it defensively rather than aborting the read.
@@ -664,22 +828,29 @@
 ;; row's {staker, signer-manager} as the next `cursor`. Doesn't check status
 ;; itself -- the caller checks sbtc-registry per request-id before deciding
 ;; whether calling settle-pending-withdrawal is worth the gas.
-(define-read-only (get-due-settlements (cursor (optional { staker: principal, signer-manager: principal })))
+(define-read-only (get-due-settlements (cursor (optional {
+    staker: principal,
+    signer-manager: principal,
+})))
     (let (
             ;; Resume just after `cursor` (the last key the caller handled), or
             ;; start at the head on the first page.
             (start (match cursor
                 cursor-key (match (map-get? pending-withdrawal-ll cursor-key)
                     links (get next links)
-                    none)
-                (var-get pending-withdrawal-ll-head)))
+                    none
+                )
+                (var-get pending-withdrawal-ll-head)
+            ))
         )
         ;; DUE_TICKS is the elided (list 100 uint) bounding the walk to at most
         ;; DUE_PAGE_SIZE node visits per call.
-        (ok (get rows (fold due-settlements-step DUE_TICKS {
-            node: start,
-            rows: (list),
-        })))
+        (ok (get rows
+            (fold due-settlements-step DUE_TICKS {
+                node: start,
+                rows: (list),
+            })
+        ))
     )
 )
 
@@ -714,17 +885,26 @@
         (request-id uint)
     )
     (let (
-            (key { staker: staker, signer-manager: (contract-of signer-manager) })
+            (key {
+                staker: staker,
+                signer-manager: (contract-of signer-manager),
+            })
             (current (unwrap! (map-get? pending-withdrawals key) ERR_UNKNOWN_PENDING_WITHDRAWAL))
-            (fold-result (fold pending-withdrawal-fold-step current
-                { target: request-id, found: false, kept: (list) }))
-            (request (unwrap! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-withdrawal-request request-id)
-                ERR_UNKNOWN_PENDING_WITHDRAWAL))
+            (fold-result (fold pending-withdrawal-fold-step current {
+                target: request-id,
+                found: false,
+                kept: (list),
+            }))
+            (request (unwrap!
+                (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
+                    get-withdrawal-request request-id
+                )
+                ERR_UNKNOWN_PENDING_WITHDRAWAL
+            ))
         )
         (asserts! (get found fold-result) ERR_UNKNOWN_PENDING_WITHDRAWAL)
         (match (get status request)
-            accepted
-            (begin
+            accepted (begin
                 (if accepted
                     (try! (contract-call? signer-manager settle-accepted-withdrawal request-id))
                     (try! (contract-call? signer-manager reclaim-failed-withdrawal request-id))
@@ -773,10 +953,16 @@
 ;; Returns the count resolved.
 (define-public (settle-pending-withdrawals
         (signer-manager <sweeper-signer-manager-trait>)
-        (items (list 100 { staker: principal, request-id: uint }))
+        (items (list 100 {
+            staker: principal,
+            request-id: uint,
+        }))
     )
     (ok (get resolved
-        (fold count-settlement items { signer-manager: signer-manager, resolved: u0 })
+        (fold count-settlement items {
+            signer-manager: signer-manager,
+            resolved: u0,
+        })
     ))
 )
 
@@ -786,11 +972,23 @@
 ;; trait and can't be returned.
 ;; #[allow(unchecked_data)]
 (define-private (count-settlement
-        (item { staker: principal, request-id: uint })
-        (state { signer-manager: <sweeper-signer-manager-trait>, resolved: uint })
+        (item {
+            staker: principal,
+            request-id: uint,
+        })
+        (state {
+            signer-manager: <sweeper-signer-manager-trait>,
+            resolved: uint,
+        })
     )
-    (match (settle-pending-withdrawal-impl (get staker item) (get signer-manager state) (get request-id item))
-        did-resolve (merge state { resolved: (+ (get resolved state) (if did-resolve u1 u0)) })
+    (match (settle-pending-withdrawal-impl (get staker item) (get signer-manager state)
+        (get request-id item)
+    )
+        did-resolve (merge state { resolved: (+ (get resolved state) (if did-resolve
+            u1
+            u0
+        )) }
+        )
         err-code state
     )
 )
@@ -820,8 +1018,5 @@
 )
 
 (define-private (authorize-admin)
-    (ok (asserts! (and (is-eq contract-caller tx-sender) (is-admin tx-sender))
-        ERR_NOT_ADMIN
-    ))
+    (ok (asserts! (and (is-eq contract-caller tx-sender) (is-admin tx-sender)) ERR_NOT_ADMIN))
 )
-
