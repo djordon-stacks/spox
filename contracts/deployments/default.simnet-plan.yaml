@@ -58,22 +58,11 @@ genesis:
   - signers
   - signers-voting
   - costs-4
-  - costs-5
   - pox-5
 plan:
   batches:
   - id: 0
     transactions:
-    - transaction-type: emulated-contract-publish
-      contract-name: sbtc-registry
-      emulated-sender: SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
-      path: .cache/requirements/SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry.clar
-      clarity-version: 3
-    - transaction-type: emulated-contract-publish
-      contract-name: sbtc-token
-      emulated-sender: SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
-      path: .cache/requirements/SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token.clar
-      clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: sbtc-deposit
       emulated-sender: SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
@@ -88,9 +77,9 @@ plan:
   - id: 1
     transactions:
     - transaction-type: emulated-contract-publish
-      contract-name: sweeper-traits
+      contract-name: reward-claim-traits
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/sweeper-traits.clar
+      path: contracts/reward-claim-traits.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: mock-signer-manager
@@ -103,13 +92,13 @@ plan:
       path: contracts/registry.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
+      contract-name: reward-claim-registry
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/reward-claim-registry.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
       contract-name: signer-manager
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/signer-manager.clar
-      clarity-version: 6
-    - transaction-type: emulated-contract-publish
-      contract-name: sweep-registry
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/sweep-registry.clar
       clarity-version: 6
     epoch: '4.0'

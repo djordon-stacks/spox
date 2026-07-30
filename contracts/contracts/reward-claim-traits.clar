@@ -1,8 +1,8 @@
-;; title: sweeper-traits
-;; summary: Trait the sweep-registry dispatches on to claim and settle rewards
+;; title: reward-claim-traits
+;; summary: Trait the reward-claim-registry dispatches on to claim and settle rewards
 ;; for a staker via their signer-manager.
 
-(define-trait sweeper-signer-manager-trait
+(define-trait reward-claim-signer-manager-trait
   (
     ;; Claim a staker's rewards for a reward cycle (and optional bond index).
     ;; Returns the net `earned` credited to the staker and, when the payout was

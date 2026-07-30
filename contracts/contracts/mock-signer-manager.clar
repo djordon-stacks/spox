@@ -1,19 +1,22 @@
-;; title: mock-signer-manager
-;; summary: Test double implementing sweeper-signer-manager-trait. Its claim /
-;; settle behavior is fully driven by setters so tests can exercise the
-;; sweep-registry's ok, empty-cycle, and error branches without a real
-;; signer-manager or pox-5.
+;; title: mock-signer-manager summary: Test double implementing
+;; reward-claim-signer-manager-trait. Its claim / settle behavior is fully
+;; driven by setters so tests can exercise the sweep-registry's ok,
+;; empty-cycle, and error branches without a real signer-manager or pox-5.
 
-(impl-trait .sweeper-traits.sweeper-signer-manager-trait)
+(impl-trait .reward-claim-traits.reward-claim-signer-manager-trait)
 
 (define-data-var should-err bool false)
 (define-data-var err-code uint u1001) ;; SM_ERR_NO_CLAIMABLE_REWARDS by default
 (define-data-var earned-amount uint u1000)
 (define-data-var withdrawal-id (optional uint) none)
 
+;; #[allow(unnecessary_public)]
 (define-public (claim-staker-rewards
+    ;; #[allow(unused_binding)]
     (staker principal)
+    ;; #[allow(unused_binding)]
     (reward-cycle uint)
+    ;; #[allow(unused_binding)]
     (bond-index (optional uint))
   )
   (if (var-get should-err)
@@ -25,11 +28,19 @@
   )
 )
 
-(define-public (settle-accepted-withdrawal (request-id uint))
+;; #[allow(unnecessary_public)]
+(define-public (settle-accepted-withdrawal 
+  ;; #[allow(unused_binding)]
+  (request-id uint)
+)
   (ok true)
 )
 
-(define-public (reclaim-failed-withdrawal (request-id uint))
+;; #[allow(unnecessary_public)]
+(define-public (reclaim-failed-withdrawal
+  ;; #[allow(unused_binding)]
+  (request-id uint)
+)
   (ok true)
 )
 

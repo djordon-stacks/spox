@@ -1,8 +1,8 @@
-(use-trait sweeper-signer-manager-trait .sweeper-traits.sweeper-signer-manager-trait)
+(use-trait reward-claim-signer-manager-trait .reward-claim-traits.reward-claim-signer-manager-trait)
 
 ;; The longest STX lock in PoX-5 is 96 reward cycles, which equals 192 distribution cycles
-(define-constant MAX_SWEEP_DISTRIBUTION_CYCLES u192) 
-;; The number of max rows returned per get-due-sweeps / get-due-settlements call
+(define-constant MAX_DISTRIBUTION_CYCLES u192) 
+;; The number of max rows returned per get-due-claims / get-due-settlements call
 (define-constant DUE_PAGE_SIZE u100) 
 
 ;; No registration for this staker and signer-manager combination
@@ -17,18 +17,18 @@
 (define-constant ERR_NO_CURRENT_POSITION (err u604))
 ;; The registration fee must be greater than zero
 (define-constant ERR_ZERO_FEE (err u605))
-;; The registration was already swept this distribution cycle
+;; The registration was already claimed this distribution cycle
 (define-constant ERR_ALREADY_SWEPT (err u606))
-;; This should be unreachable: a registration buys at most 192 sweeps and each sweep
+;; This should be unreachable: a registration buys at most 192 claims and each claim
 ;; adds at most one pending withdrawal, so the 192-slot list can never overflow
 (define-constant ERR_TOO_MANY_PENDING (err u607))
 ;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u608))
 ;; signer-manager's ERR_NO_CLAIMABLE_REWARDS, matched (not propagated) in
-;; perform-sweep-impl so a genuinely empty cycle advances instead of stalling.
+;; process-reward-claim-impl so a genuinely empty cycle advances instead of stalling.
 (define-constant SM_ERR_NO_CLAIMABLE_REWARDS u1001)
 
-;; A (list 100 uint) whose only job is to bound the get-due-sweeps /
+;; A (list 100 uint) whose only job is to bound the get-due-claims /
 ;; get-due-settlements folds to at most DUE_PAGE_SIZE (100) node visits per
 ;; call. The element values are never read (the fold step ignores `tick`).
 (define-constant DUE_TICKS (list
@@ -44,7 +44,7 @@
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
 ))
 
-;; The max rows a single get-due-sweeps / get-due-settlements call returns.
+;; The max rows a single get-due-claims / get-due-settlements call returns.
 ;; Off-chain pagination compares a page's length to this to know if more remain.
 (define-read-only (get-page-size)
     DUE_PAGE_SIZE
@@ -57,7 +57,7 @@
 )
 (map-set admins tx-sender true)
 
-(define-data-var fee-per-sweep uint u100000) ;; 0.1 STX, burned per sweep bought at registration
+(define-data-var fee-per-claim uint u100000) ;; 0.1 STX, burned per claim bought at registration
 (define-data-var registration-ll-head (optional {
     staker: principal,
     signer-manager: principal,
@@ -74,9 +74,9 @@
     }
     {
         bond-index: (optional uint),
-        remaining-sweeps: uint,
+        remaining-claims: uint,
         next-reward-cycle: uint,
-        last-swept-dist-cycle: (optional uint),
+        last-claim-dist-cycle: (optional uint),
     }
 )
 
@@ -161,7 +161,7 @@
 )
 
 ;; --- Doubly-linked-list maintenance over registration-ll ---
-;; The list lets get-due-sweeps walk every live registration without a global
+;; The list lets get-due-claims walk every live registration without a global
 ;; index. `registration-ll-head`/`-tail` bound the walk; each node stores its
 ;; prev/next key. Append is O(1) at the tail; remove splices in O(1). Both are
 ;; infallible and return bool.
@@ -279,22 +279,22 @@
     )
 )
 
-;; True if this registration has a sweep left and wasn't swept in
-;; `cur-dist-cycle`. The caller passes `cur-dist-cycle` (read once) rather than
+;; Returns true if this registration has a claim left and wasn't claimed in
+;; `current-dist-cycle`. The caller passes `current-dist-cycle` (read once) rather than
 ;; having this re-read `current-distribution-cycle` per node during a walk.
-;; Used by get-due-sweeps.
+;; Used by get-due-claims.
 (define-private (is-due
         (registration {
-            remaining-sweeps: uint,
-            last-swept-dist-cycle: (optional uint),
+            remaining-claims: uint,
+            last-claim-dist-cycle: (optional uint),
             bond-index: (optional uint),
             next-reward-cycle: uint,
         })
-        (cur-dist-cycle uint)
+        (current-dist-cycle uint)
     )
     (and
-        (> (get remaining-sweeps registration) u0)
-        (not (is-eq (get last-swept-dist-cycle registration) (some cur-dist-cycle)))
+        (> (get remaining-claims registration) u0)
+        (not (is-eq (get last-claim-dist-cycle registration) (some current-dist-cycle)))
     )
 )
 
@@ -333,20 +333,20 @@
     )
 )
 
-;; Fold step for get-due-sweeps. From the current `node` it reads that
+;; Fold step for get-due-claims. From the current `node` it reads that
 ;; registration, appends a row when it is due, and advances `node` to the
 ;; next linked-list entry. Once `node` is none (walked past the tail) it is a
-;; no-op for the remaining ticks. `cur-dist-cycle` rides in the accumulator so
+;; no-op for the remaining ticks. `current-dist-cycle` rides in the accumulator so
 ;; the due check never re-reads it. `tick` is unused: the tick list only
 ;; bounds the number of iterations.
-(define-private (due-sweeps-step
+(define-private (due-claims-step
         (tick_ uint)
         (acc {
             node: (optional {
                 staker: principal,
                 signer-manager: principal,
             }),
-            cur-dist-cycle: uint,
+            current-dist-cycle: uint,
             rows: (list 100
                 {
                     signer-manager: principal,
@@ -365,7 +365,7 @@
             )))
             (match (map-get? registrations key)
                 registration
-                (if (is-due registration (get cur-dist-cycle acc))
+                (if (is-due registration (get current-dist-cycle acc))
                     (merge acc {
                         node: next-node,
                         rows: (default-to (get rows acc)
@@ -393,7 +393,7 @@
 
 ;; The keeper's work list. Walks the registration linked list from `cursor`
 ;; (or the head if none) and returns up to 100 registrations due this
-;; distribution cycle: remaining-sweeps > 0 and not yet swept this
+;; distribution cycle: remaining-claims > 0 and not yet claimed this
 ;; distribution cycle. Each row:
 ;;   signer-manager the registration's signer-manager, a plain principal.
 ;;   staker         the staker.
@@ -401,7 +401,7 @@
 ;;   reward-cycle   the cycle this registration's next claim targets.
 ;; Paginate by passing the last row's {staker, signer-manager} as the next
 ;; `cursor`; done when a page comes back short.
-(define-read-only (get-due-sweeps (cursor (optional {
+(define-read-only (get-due-claims (cursor (optional {
     staker: principal,
     signer-manager: principal,
 })))
@@ -420,22 +420,22 @@
         ;; most DUE_PAGE_SIZE node visits per call. `current-distribution-cycle`
         ;; is read once here and threaded through the fold.
         (ok (get rows
-            (fold due-sweeps-step DUE_TICKS {
+            (fold due-claims-step DUE_TICKS {
                 node: start,
-                cur-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
+                current-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
                 rows: (list),
             })
         ))
     )
 )
 
-;; Admin-only. Set the STX fee burned per sweep bought. Affects only
-;; registrations created afterward; existing ones keep the sweeps they bought.
-(define-public (set-fee-per-sweep (new-fee uint))
+;; Admin-only. Set the STX fee burned per claim bought. Affects only
+;; registrations created afterward; existing ones keep the claims they bought.
+(define-public (set-fee-per-claim (new-fee uint))
     (begin
         (try! (authorize-admin))
         (asserts! (> new-fee u0) ERR_ZERO_FEE)
-        (ok (var-set fee-per-sweep new-fee))
+        (ok (var-set fee-per-claim new-fee))
     )
 )
 
@@ -453,21 +453,21 @@
     (let ((registration (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED)))
         (map-delete registrations key)
         (ll-remove key)
-        (ok (get remaining-sweeps registration))
+        (ok (get remaining-claims registration))
     )
 )
 
 ;; Bookkeeping only. Validate the staker's position and create the registration
-;; at {staker, signer} with `num-sweeps` sweeps, starting next-reward-cycle at
+;; at {staker, signer} with `num-claims` claims, starting next-reward-cycle at
 ;; max(first-reward-cycle, current reward cycle). Moves no STX -- the fee is
-;; burned by the caller (`register-for-sweep`), or the sweeps are carried from a
+;; burned by the caller (`register-for-claims`), or the claims are carried from a
 ;; destroyed registration (`update-registration`). Fails if already registered
 ;; or the position isn't under `signer`.
 (define-private (create-registration
         (staker principal)
         (signer principal)
         (bond-index (optional uint))
-        (num-sweeps uint)
+        (num-claims uint)
     )
     (let (
             (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
@@ -479,64 +479,64 @@
         )
         (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
         (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
-        (asserts! (> num-sweeps u0) ERR_INSUFFICIENT_FEE)
+        (asserts! (> num-claims u0) ERR_INSUFFICIENT_FEE)
         (map-set registrations key {
             bond-index: bond-index,
-            remaining-sweeps: num-sweeps,
+            remaining-claims: num-claims,
             next-reward-cycle: (max-uint (get first-reward-cycle position) current-reward),
-            last-swept-dist-cycle: none,
+            last-claim-dist-cycle: none,
         })
         (ll-append key)
         (ok true)
     )
 )
 
-;; Register a staker to be swept once per distribution cycle.
+;; Register a staker to be claimed once per distribution cycle.
 ;; Permissionless: `tx-sender` pays `fee` from their own account and may
 ;; register any staker; the staker must currently be staking in pox-5.
 ;; Parameters:
 ;;   staker         the principal being registered.
 ;;   signer-manager with `staker`, the registration key; must be the signer
 ;;                  pox-5 reports for the position, and every sweep claims
-;;                  from it.
+;;                  from it to the staker.
 ;;   bond-index     none for an STX stake, (some n) for bond n.
-;;   fee            STX paid, buying min(fee / fee-per-sweep, 192) sweeps. Only
+;;   fee            STX paid, buying min(fee / fee-per-claim, 192) claims. Only
 ;;                  the used portion is burned; any sub-fee remainder stays with
 ;;                  the caller, so the contract never custodies STX.
-;; The first sweep targets max(first-reward-cycle, current reward cycle): an
-;; already-earning staker starts this cycle (swept the next distribution
+;; The first claim targets max(first-reward-cycle, current reward cycle): an
+;; already-earning staker starts this cycle (claimed the next distribution
 ;; boundary), a freshly-staked one starts next cycle. Fails if this {staker,
-;; signer-manager} is already registered or `fee` buys no sweeps. Returns
+;; signer-manager} is already registered or `fee` buys no claims. Returns
 ;; sweeps bought.
-(define-public (register-for-sweep
+(define-public (register-for-claims
         (staker principal)
-        (signer-manager <sweeper-signer-manager-trait>)
+        (signer-manager <reward-claim-signer-manager-trait>)
         (bond-index (optional uint))
         (fee uint)
     )
     (let (
             (caller tx-sender)
-            (price (var-get fee-per-sweep))
-            (num-sweeps (min-uint (/ fee price) MAX_SWEEP_DISTRIBUTION_CYCLES))
+            (price (var-get fee-per-claim))
+            (num-claims (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
             ;; An admin can register a staker for free
-            (burned (if (is-admin caller) u0 (* num-sweeps price)))
+            (burned (if (is-admin caller) u0 (* num-claims price)))
         )
-        (asserts! (> num-sweeps u0) ERR_INSUFFICIENT_FEE)
+        (asserts! (> num-claims u0) ERR_INSUFFICIENT_FEE)
         (if (> burned u0)
             (begin (try! (stx-burn? burned caller)) true)
             true
         )
-        (try! (create-registration staker (contract-of signer-manager) bond-index num-sweeps))
+        (try! (create-registration staker (contract-of signer-manager) bond-index num-claims))
         (print {
-            topic: "register-for-sweep",
+            topic: "register-for-claims",
             staker: staker,
             registrant: caller,
             signer-manager: (contract-of signer-manager),
             bond-index: bond-index,
-            num-sweeps: num-sweeps,
+            num-claims: num-claims,
             burned: burned,
         })
-        (ok num-sweeps)
+        (ok num-claims)
     )
 )
 
@@ -547,7 +547,7 @@
 ;; with the registration. Atomic: a failed create reverts the destroy.
 ;;
 ;; WARNING: this forfeits any cycles the old signer still owes but hasn't been
-;; swept for; those were only claimable via the old signer. Use once the old
+;; claimed for; those were only claimable via the old signer. Use once the old
 ;; signer is drained. Returns sweeps carried over.
 (define-public (update-registration
         (old-signer-manager principal)
@@ -567,17 +567,17 @@
             staker: caller,
             old-signer-manager: old-signer-manager,
             new-signer-manager: new-signer-manager,
-            num-sweeps: carried,
+            num-claims: carried,
         })
         (ok carried)
     )
 )
 
 ;; Bookkeeping only. Advance a registration one distribution cycle: mark it
-;; swept in `cur-dist-cycle`, decrement remaining-sweeps (deleting the
+;; claimed in `current-dist-cycle`, decrement remaining-claims (deleting the
 ;; registration, and its linked-list node, at zero), and advance
-;; next-reward-cycle by one once cur-reward-cycle has passed it. Shared by the
-;; ok and empty-cycle paths of perform-sweep-impl.
+;; next-reward-cycle by one once current-reward-cycle has passed it. Shared by the
+;; ok and empty-cycle paths of process-reward-claim-impl.
 ;; #[allow(unchecked_data)]
 (define-private (advance-registration
         (key {
@@ -586,15 +586,15 @@
         })
         (registration {
             bond-index: (optional uint),
-            remaining-sweeps: uint,
+            remaining-claims: uint,
             next-reward-cycle: uint,
-            last-swept-dist-cycle: (optional uint),
+            last-claim-dist-cycle: (optional uint),
         })
-        (cur-reward-cycle uint)
-        (cur-dist-cycle uint)
+        (current-reward-cycle uint)
+        (current-dist-cycle uint)
     )
-    (if (<= (get remaining-sweeps registration) u1)
-        ;; last sweep: drop the registration entirely
+    (if (<= (get remaining-claims registration) u1)
+        ;; last claim: drop the registration entirely
         (begin
             (map-delete registrations key)
             (ll-remove key)
@@ -602,12 +602,12 @@
         (begin
             (map-set registrations key
                 (merge registration {
-                    remaining-sweeps: (- (get remaining-sweeps registration) u1),
-                    next-reward-cycle: (if (> cur-reward-cycle (get next-reward-cycle registration))
+                    remaining-claims: (- (get remaining-claims registration) u1),
+                    next-reward-cycle: (if (> current-reward-cycle (get next-reward-cycle registration))
                         (+ (get next-reward-cycle registration) u1)
                         (get next-reward-cycle registration)
                     ),
-                    last-swept-dist-cycle: (some cur-dist-cycle),
+                    last-claim-dist-cycle: (some current-dist-cycle),
                 })
             )
             true
@@ -615,14 +615,13 @@
     )
 )
 
-;; The one-claim primitive behind all three sweep entrypoints. Looks up the
-;; registration by {staker, (contract-of signer-manager)} -- a signer with no
-;; registration for the staker just yields ERR_NOT_REGISTERED, so there's no
-;; separate wrong-signer check. `cur-reward-cycle`/`cur-dist-cycle` are passed
-;; in rather than re-read, so a batch reads them once; safe because this is
-;; private. Asserts the registration has a remaining sweep and wasn't already
-;; swept in `cur-dist-cycle`, then calls `claim-staker-rewards` and branches on
-;; the result (see the section 3.2 docstring for the full table):
+;; The one-claim primitive behind all three claim entrypoints. Looks up the
+;; registration by {staker, signer-manager}. `current-reward-cycle` /
+;; `current-dist-cycle` are passed in rather than re-read, so a batch reads
+;; them once; safe because this is private. Asserts the registration has a
+;; remaining sweep and wasn't already claimed in `current-dist-cycle`, then
+;; calls `claim-staker-rewards` and branches on the result (see the section
+;; 3.2 docstring for the full table):
 ;;   * ok            -- the staker was paid; advance-registration and record any
 ;;                     withdrawal-request for later settlement.
 ;;   * ERR_NO_CLAIMABLE_REWARDS (u1001) with pox-5 get-earned == u0 -- a
@@ -633,11 +632,11 @@
 ;;   * any other err -- returned unchanged.
 ;; No STX moves -- the fee was burned at registration.
 ;; #[allow(unchecked_data)]
-(define-private (perform-sweep-impl
+(define-private (process-reward-claim-impl
         (staker principal)
-        (signer-manager <sweeper-signer-manager-trait>)
-        (cur-reward-cycle uint)
-        (cur-dist-cycle uint)
+        (signer-manager <reward-claim-signer-manager-trait>)
+        (current-reward-cycle uint)
+        (current-dist-cycle uint)
     )
     (let (
             (key {
@@ -648,21 +647,21 @@
             (reward-cycle (get next-reward-cycle registration))
             (bond-index (get bond-index registration))
         )
-        (asserts! (> (get remaining-sweeps registration) u0) ERR_NOT_REGISTERED)
-        (asserts! (not (is-eq (get last-swept-dist-cycle registration) (some cur-dist-cycle)))
+        (asserts! (> (get remaining-claims registration) u0) ERR_NOT_REGISTERED)
+        (asserts! (not (is-eq (get last-claim-dist-cycle registration) (some current-dist-cycle)))
             ERR_ALREADY_SWEPT
         )
         (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
             claim-result
             ;; paid: advance and record any L1 withdrawal for later settlement
             (let ((withdrawal-request (get withdrawal-request claim-result)))
-                (advance-registration key registration cur-reward-cycle cur-dist-cycle)
+                (advance-registration key registration current-reward-cycle current-dist-cycle)
                 (match withdrawal-request
                     id (try! (append-pending-withdrawal key id))
                     true
                 )
                 (print {
-                    topic: "perform-sweep",
+                    topic: "process-reward-claim",
                     staker: staker,
                     signer-manager: (contract-of signer-manager),
                     reward-cycle: reward-cycle,
@@ -686,9 +685,9 @@
                     )
                 )
                 (begin
-                    (advance-registration key registration cur-reward-cycle cur-dist-cycle)
+                    (advance-registration key registration current-reward-cycle current-dist-cycle)
                     (print {
-                        topic: "perform-sweep",
+                        topic: "process-reward-claim",
                         staker: staker,
                         signer-manager: (contract-of signer-manager),
                         reward-cycle: reward-cycle,
@@ -731,57 +730,58 @@
 ;; Sweep one staker under `signer-manager`. Permissionless. signer-manager
 ;; must be passed as a trait (claim-staker-rewards dispatches on it and it
 ;; can't be pulled from the map); the caller learns which from
-;; `get-due-sweeps`. Reads pox-5's current cycles and delegates to
-;; perform-sweep-impl. Returns the withdrawal request-id, if one was initiated.
+;; `get-due-claims`. Reads pox-5's current cycles and delegates to
+;; process-reward-claim-impl. Returns the withdrawal request-id, if one was initiated.
 ;; #[allow(unchecked_data)]
-(define-public (perform-sweep
+(define-public (process-reward-claim
         (staker principal)
-        (signer-manager <sweeper-signer-manager-trait>)
+        (signer-manager <reward-claim-signer-manager-trait>)
     )
-    (perform-sweep-impl staker signer-manager
+    (process-reward-claim-impl staker signer-manager
         (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle)
         (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle)
     )
 )
 
-;; Sweep the given `stakers`, each keyed with `signer-manager`. Reads pox-5's
-;; current cycles once and threads them through. Skips, without aborting the
-;; batch, any staker with no registration under `signer-manager`, one already
-;; swept this distribution cycle, or one whose claim fails. One signer-manager
-;; per call, since the trait must be a single top-level argument; the keeper
-;; builds `stakers` from one signer-manager's group of `get-due-sweeps` rows.
-;; Returns the count swept.
-(define-public (perform-sweeps
-        (signer-manager <sweeper-signer-manager-trait>)
+;; Claim rewards for the given `stakers`, each keyed with `signer-manager`,
+;; giving their rewards to them. Reads pox-5's current cycles once and
+;; threads them through. Skips, without aborting the batch, any staker with
+;; no registration under `signer-manager`, one already claimed this
+;; distribution cycle, or one whose claim fails. One signer-manager per
+;; call, since the trait must be a single top-level argument; the keeper
+;; builds `stakers` from one signer-manager's group of `get-due-claims`
+;; rows. Returns the count claimed.
+(define-public (process-reward-claims
+        (signer-manager <reward-claim-signer-manager-trait>)
         (stakers (list 100 principal))
     )
-    (ok (get swept
-        (fold count-sweep stakers {
+    (ok (get claimed
+        (fold count-claim stakers {
             signer-manager: signer-manager,
-            cur-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle),
-            cur-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
-            swept: u0,
+            current-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle),
+            current-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
+            claimed: u0,
         })
     ))
 )
 
-;; Fold step for perform-sweeps: match each perform-sweep-impl result so a
+;; Fold step for process-reward-claims: match each process-reward-claim-impl result so a
 ;; skip or failure doesn't abort the batch. Returns the count, not the
 ;; accumulator, which carries the trait and can't be returned.
 ;; #[allow(unchecked_data)]
-(define-private (count-sweep
+(define-private (count-claim
         (staker principal)
         (state {
-            signer-manager: <sweeper-signer-manager-trait>,
-            cur-reward-cycle: uint,
-            cur-dist-cycle: uint,
-            swept: uint,
+            signer-manager: <reward-claim-signer-manager-trait>,
+            current-reward-cycle: uint,
+            current-dist-cycle: uint,
+            claimed: uint,
         })
     )
-    (match (perform-sweep-impl staker (get signer-manager state) (get cur-reward-cycle state)
-        (get cur-dist-cycle state)
+    (match (process-reward-claim-impl staker (get signer-manager state) (get current-reward-cycle state)
+        (get current-dist-cycle state)
     )
-        ok-val (merge state { swept: (+ (get swept state) u1) })
+        ok-val (merge state { claimed: (+ (get claimed state) u1) })
         err-code state
     )
 )
@@ -845,7 +845,7 @@
 ;;   staker, signer-manager  the registration key.
 ;;   request-ids             every sbtc-registry request-id awaiting settlement
 ;;                           for that key (up to 192).
-;; Every node in the list has a nonempty entry, so unlike get-due-sweeps there
+;; Every node in the list has a nonempty entry, so unlike get-due-claims there
 ;; is no filtering: each node yields exactly one row, pagination is exact, and
 ;; a short page reliably means the tail was reached. Includes entries whether
 ;; or not their parent registration still exists. Paginate by passing the last
@@ -905,7 +905,7 @@
 ;; #[allow(unchecked_data)]
 (define-private (settle-pending-withdrawal-impl
         (staker principal)
-        (signer-manager <sweeper-signer-manager-trait>)
+        (signer-manager <reward-claim-signer-manager-trait>)
         (request-id uint)
     )
     (let (
@@ -965,18 +965,18 @@
 ;; #[allow(unchecked_data)]
 (define-public (settle-pending-withdrawal
         (staker principal)
-        (signer-manager <sweeper-signer-manager-trait>)
+        (signer-manager <reward-claim-signer-manager-trait>)
         (request-id uint)
     )
     (settle-pending-withdrawal-impl staker signer-manager request-id)
 )
 
 ;; Batch settle-pending-withdrawal, one signer-manager per call for the same
-;; reason as perform-sweeps: the trait must be a single top-level argument.
+;; reason as process-reward-claims: the trait must be a single top-level argument.
 ;; Skips, without aborting the batch, any item not found or still pending.
 ;; Returns the count resolved.
 (define-public (settle-pending-withdrawals
-        (signer-manager <sweeper-signer-manager-trait>)
+        (signer-manager <reward-claim-signer-manager-trait>)
         (items (list 100 {
             staker: principal,
             request-id: uint,
@@ -1001,7 +1001,7 @@
             request-id: uint,
         })
         (state {
-            signer-manager: <sweeper-signer-manager-trait>,
+            signer-manager: <reward-claim-signer-manager-trait>,
             resolved: uint,
         })
     )

@@ -52,13 +52,13 @@ path = "contracts/registry.clar"
 clarity_version = 6
 epoch = 4.0
 
-[contracts.sweeper-traits]
-path = "contracts/sweeper-traits.clar"
+[contracts.reward-claim-traits]
+path = "contracts/reward-claim-traits.clar"
 clarity_version = 6
 epoch = 4.0
 
-[contracts.sweep-registry]
-path = "contracts/sweep-registry.clar"
+[contracts.reward-claim-registry]
+path = "contracts/reward-claim-registry.clar"
 clarity_version = 6
 epoch = 4.0
 
@@ -72,7 +72,7 @@ clarity_version = 6
 epoch = 4.0
 
 # --- Mocks, for fast unit tests ---
-# mock-signer-manager is passed to perform-sweep / settle-pending-withdrawal as a
+# mock-signer-manager is passed to process-reward-claim / settle-pending-withdrawal as a
 # trait argument, so it can be used per-test alongside the real signer-manager.
 
 [contracts.mock-signer-manager]

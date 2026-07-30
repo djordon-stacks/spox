@@ -10,7 +10,7 @@ import {
 
 /**
  * Fixtures for driving the REAL pox-5 / signer-manager / sBTC contracts in
- * simnet, so the sweep-registry can be tested against them end to end.
+ * simnet, so the reward-claim-registry can be tested against them end to end.
  *
  * Dependency-free beyond @stacks/transactions: key derivation, the SIP-018
  * signer-key signing (hash + secp256k1), and CV (de)serialization all come from
@@ -18,7 +18,7 @@ import {
  */
 
 // clarinet-sdk applies STX locking only to the boot pox-5, and both
-// signer-manager.clar and sweep-registry.clar call that principal, so every
+// signer-manager.clar and reward-claim-registry.clar call that principal, so every
 // pox-5 interaction here must target it (not a deployer-published copy).
 export const POX5 = "ST000000000000000000002AMW42H.pox-5";
 
@@ -30,7 +30,7 @@ export const wallet3 = accounts.get("wallet_3")!;
 export const wallet4 = accounts.get("wallet_4")!;
 
 export const SIGNER_MANAGER = `${deployer}.signer-manager`;
-export const SWEEP_REGISTRY = `${deployer}.sweep-registry`;
+export const SWEEP_REGISTRY = `${deployer}.reward-claim-registry`;
 export const SBTC_TOKEN =
   "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
 export const SBTC_REGISTRY =
@@ -53,7 +53,7 @@ const POX5_SIGNER_DOMAIN = { name: "pox-5-signer", version: "1.0.0" };
 /** simnet runs with the testnet chain-id. */
 const CHAIN_ID = 2147483648;
 
-// sweep-registry error codes
+// reward-claim-registry error codes
 export const ERR_NOT_REGISTERED = 600n;
 export const ERR_ALREADY_REGISTERED = 601n;
 export const ERR_INSUFFICIENT_FEE = 602n;
@@ -64,8 +64,8 @@ export const ERR_ALREADY_SWEPT = 606n;
 export const ERR_TOO_MANY_PENDING = 607n;
 export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 608n;
 
-/** sweep-registry's default fee-per-sweep. */
-export const FEE_PER_SWEEP = 100_000n;
+/** reward-claim-registry's default fee-per-sweep. */
+export const FEE_PER_CLAIM = 100_000n;
 
 // ---------------------------------------------------------------------------
 // low-level helpers
@@ -363,7 +363,7 @@ export function stakeFor(
  * Move rewards into the signer-manager for `rewardCycle`: fund pox-5 with sBTC,
  * advance to that cycle's distribution boundary, run pox-5 calculate-rewards,
  * then signer-manager claim-rewards (which is what makes rewards visible to
- * stakers, and what perform-sweep requires to have happened).
+ * stakers, and what process-reward-claim requires to have happened).
  */
 export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle = 1n) {
   simnet.callPublicFn(
@@ -383,7 +383,7 @@ export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle = 1n) {
 }
 
 // ---------------------------------------------------------------------------
-// sweep-registry helpers
+// reward-claim-registry helpers
 // ---------------------------------------------------------------------------
 
 export function registerForSweep(
@@ -394,8 +394,8 @@ export function registerForSweep(
   bondIndex: OptionalCV<UIntCV> = Cl.none(),
 ) {
   return simnet.callPublicFn(
-    "sweep-registry",
-    "register-for-sweep",
+    "reward-claim-registry",
+    "register-for-claims",
     [Cl.principal(staker), Cl.principal(signerManager), bondIndex, Cl.uint(fee)],
     sender,
   );
@@ -407,8 +407,8 @@ export function performSweep(
   signerManager = SIGNER_MANAGER,
 ) {
   return simnet.callPublicFn(
-    "sweep-registry",
-    "perform-sweep",
+    "reward-claim-registry",
+    "process-reward-claim",
     [Cl.principal(staker), Cl.principal(signerManager)],
     sender,
   );
@@ -416,7 +416,7 @@ export function performSweep(
 
 export function getRegistration(staker: string, signerManager = SIGNER_MANAGER) {
   return simnet.callReadOnlyFn(
-    "sweep-registry",
+    "reward-claim-registry",
     "get-registration",
     [Cl.principal(staker), Cl.principal(signerManager)],
     deployer,
@@ -425,8 +425,8 @@ export function getRegistration(staker: string, signerManager = SIGNER_MANAGER) 
 
 export function getDueSweeps(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
-    "sweep-registry",
-    "get-due-sweeps",
+    "reward-claim-registry",
+    "get-due-claims",
     [cursor],
     deployer,
   ).result;
@@ -434,7 +434,7 @@ export function getDueSweeps(cursor = Cl.none()) {
 
 export function getDueSettlements(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
-    "sweep-registry",
+    "reward-claim-registry",
     "get-due-settlements",
     [cursor],
     deployer,
