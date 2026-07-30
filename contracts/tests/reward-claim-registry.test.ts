@@ -2,7 +2,7 @@ import { Cl } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ERR_ALREADY_REGISTERED,
-  ERR_ALREADY_SWEPT,
+  ERR_ALREADY_CLAIMED,
   ERR_INSUFFICIENT_FEE,
   ERR_NO_CURRENT_POSITION,
   ERR_NOT_ADMIN,
@@ -51,7 +51,7 @@ function settlePendingWithdrawal(staker: string, requestId: bigint, sender: stri
 function registered(staker: string) {
   return Cl.tuple({
     "signer-manager": Cl.principal(SIGNER_MANAGER),
-    staker: Cl.principal(staker),
+    "staker": Cl.principal(staker),
     "bond-index": Cl.none(),
     "reward-cycle": Cl.uint(1),
   });
@@ -60,7 +60,7 @@ function registered(staker: string) {
 // A get-due-settlements row: {staker, signer-manager, request-ids}.
 function settlement(staker: string, requestIds: bigint[]) {
   return Cl.tuple({
-    staker: Cl.principal(staker),
+    "staker": Cl.principal(staker),
     "signer-manager": Cl.principal(SIGNER_MANAGER),
     "request-ids": Cl.list(requestIds.map((id) => Cl.uint(id))),
   });
@@ -125,7 +125,7 @@ describe("admin", () => {
   });
 
   // Documents the self-lockout footgun: the sole admin can remove itself,
-  // permanently bricking set-fee-per-claim and update-admin. If a last-admin
+  // permanently bricking set-fee-per-cycle and update-admin. If a last-admin
   // guard is added, flip this expectation.
   it("the sole admin CAN lock itself out (no last-admin guard)", () => {
     simnet.callPublicFn(
@@ -135,27 +135,27 @@ describe("admin", () => {
       deployer,
     );
     expect(
-      simnet.callPublicFn("reward-claim-registry", "set-fee-per-claim", [Cl.uint(1)], deployer).result,
+      simnet.callPublicFn("reward-claim-registry", "set-fee-per-cycle", [Cl.uint(1)], deployer).result,
     ).toBeErr(Cl.uint(ERR_NOT_ADMIN));
   });
 });
 
-describe("set-fee-per-claim", () => {
+describe("set-fee-per-cycle", () => {
   it("admin can change the fee", () => {
     expect(
-      simnet.callPublicFn("reward-claim-registry", "set-fee-per-claim", [Cl.uint(250000)], deployer)
+      simnet.callPublicFn("reward-claim-registry", "set-fee-per-cycle", [Cl.uint(250000)], deployer)
         .result,
     ).toBeOk(Cl.bool(true));
   });
   it("rejects a non-admin", () => {
     expect(
-      simnet.callPublicFn("reward-claim-registry", "set-fee-per-claim", [Cl.uint(250000)], wallet1)
+      simnet.callPublicFn("reward-claim-registry", "set-fee-per-cycle", [Cl.uint(250000)], wallet1)
         .result,
     ).toBeErr(Cl.uint(ERR_NOT_ADMIN));
   });
   it("rejects a zero fee", () => {
     expect(
-      simnet.callPublicFn("reward-claim-registry", "set-fee-per-claim", [Cl.uint(0)], deployer).result,
+      simnet.callPublicFn("reward-claim-registry", "set-fee-per-cycle", [Cl.uint(0)], deployer).result,
     ).toBeErr(Cl.uint(ERR_ZERO_FEE));
   });
 });
@@ -188,7 +188,7 @@ describe("register-for-claims", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(3),
+        "remaining-cycles": Cl.uint(3),
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.none(),
       }),
@@ -241,7 +241,7 @@ describe("register-for-claims", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(1),
+        "remaining-cycles": Cl.uint(1),
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.none(),
       }),
@@ -297,7 +297,7 @@ describe("get-due-claims", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(2), // 3 -> 2
+        "remaining-cycles": Cl.uint(2), // 3 -> 2
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.some(Cl.uint(distCycle)),
       }),
@@ -306,7 +306,7 @@ describe("get-due-claims", () => {
     expect(getRegistration(wallet2)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(3),
+        "remaining-cycles": Cl.uint(3),
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.none(),
       }),
@@ -331,7 +331,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(3),
+        "remaining-cycles": Cl.uint(3),
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.none(),
       }),
@@ -354,7 +354,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(2), // 3 -> 2
+        "remaining-cycles": Cl.uint(2), // 3 -> 2
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.some(Cl.uint(distCycle)),
       }),
@@ -372,7 +372,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(3),
+        "remaining-cycles": Cl.uint(3),
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.none(),
       }),
@@ -387,7 +387,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getRegistration(wallet1)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
-        "remaining-claims": Cl.uint(2), // 3 -> 2
+        "remaining-cycles": Cl.uint(2), // 3 -> 2
         "next-reward-cycle": Cl.uint(1),
         "last-claim-dist-cycle": Cl.some(Cl.uint(distCycle)),
       }),
@@ -403,7 +403,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
   it("errors when already swept this distribution cycle", () => {
     registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
     performSweep(wallet1); // empty-cycle advance, marks swept
-    expect(performSweep(wallet1).result).toBeErr(Cl.uint(ERR_ALREADY_SWEPT));
+    expect(performSweep(wallet1).result).toBeErr(Cl.uint(ERR_ALREADY_CLAIMED));
   });
 });
 
@@ -466,7 +466,7 @@ describe("update-registration", () => {
     stakeFor(wallet1);
     registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
     // moving to a signer-manager the staker has no position under fails on the
-    // create side (ERR_NO_CURRENT_POSITION), after destroying nothing (atomic).
+    // create side with error ERR_NO_CURRENT_POSITION.
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "update-registration",

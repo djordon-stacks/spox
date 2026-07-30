@@ -1,9 +1,9 @@
 (use-trait reward-claim-signer-manager-trait .reward-claim-traits.reward-claim-signer-manager-trait)
 
 ;; The longest STX lock in PoX-5 is 96 reward cycles, which equals 192 distribution cycles
-(define-constant MAX_DISTRIBUTION_CYCLES u192) 
+(define-constant MAX_DISTRIBUTION_CYCLES u192)
 ;; The number of max rows returned per get-due-claims / get-due-settlements call
-(define-constant DUE_PAGE_SIZE u100) 
+(define-constant DUE_PAGE_SIZE u100)
 
 ;; No registration for this staker and signer-manager combination
 (define-constant ERR_NOT_REGISTERED (err u600))
@@ -18,7 +18,7 @@
 ;; The registration fee must be greater than zero
 (define-constant ERR_ZERO_FEE (err u605))
 ;; The registration was already claimed this distribution cycle
-(define-constant ERR_ALREADY_SWEPT (err u606))
+(define-constant ERR_ALREADY_CLAIMED (err u606))
 ;; This should be unreachable: a registration buys at most 192 claims and each claim
 ;; adds at most one pending withdrawal, so the 192-slot list can never overflow
 (define-constant ERR_TOO_MANY_PENDING (err u607))
@@ -57,7 +57,9 @@
 )
 (map-set admins tx-sender true)
 
-(define-data-var fee-per-claim uint u100000) ;; 0.1 STX, burned per claim bought at registration
+;; This is the amount of uSTX burned per claim bought at registration
+(define-data-var fee-per-cycle uint u100000)
+
 (define-data-var registration-ll-head (optional {
     staker: principal,
     signer-manager: principal,
@@ -74,7 +76,7 @@
     }
     {
         bond-index: (optional uint),
-        remaining-claims: uint,
+        remaining-cycles: uint,
         next-reward-cycle: uint,
         last-claim-dist-cycle: (optional uint),
     }
@@ -285,7 +287,7 @@
 ;; Used by get-due-claims.
 (define-private (is-due
         (registration {
-            remaining-claims: uint,
+            remaining-cycles: uint,
             last-claim-dist-cycle: (optional uint),
             bond-index: (optional uint),
             next-reward-cycle: uint,
@@ -293,7 +295,7 @@
         (current-dist-cycle uint)
     )
     (and
-        (> (get remaining-claims registration) u0)
+        (> (get remaining-cycles registration) u0)
         (not (is-eq (get last-claim-dist-cycle registration) (some current-dist-cycle)))
     )
 )
@@ -393,7 +395,7 @@
 
 ;; The keeper's work list. Walks the registration linked list from `cursor`
 ;; (or the head if none) and returns up to 100 registrations due this
-;; distribution cycle: remaining-claims > 0 and not yet claimed this
+;; distribution cycle: remaining-cycles > 0 and not yet claimed this
 ;; distribution cycle. Each row:
 ;;   signer-manager the registration's signer-manager, a plain principal.
 ;;   staker         the staker.
@@ -431,11 +433,11 @@
 
 ;; Admin-only. Set the STX fee burned per claim bought. Affects only
 ;; registrations created afterward; existing ones keep the claims they bought.
-(define-public (set-fee-per-claim (new-fee uint))
+(define-public (set-fee-per-cycle (new-fee uint))
     (begin
         (try! (authorize-admin))
         (asserts! (> new-fee u0) ERR_ZERO_FEE)
-        (ok (var-set fee-per-claim new-fee))
+        (ok (var-set fee-per-cycle new-fee))
     )
 )
 
@@ -453,12 +455,12 @@
     (let ((registration (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED)))
         (map-delete registrations key)
         (ll-remove key)
-        (ok (get remaining-claims registration))
+        (ok (get remaining-cycles registration))
     )
 )
 
 ;; Bookkeeping only. Validate the staker's position and create the registration
-;; at {staker, signer} with `num-claims` claims, starting next-reward-cycle at
+;; at {staker, signer} with `num-cycles` claims, starting next-reward-cycle at
 ;; max(first-reward-cycle, current reward cycle). Moves no STX -- the fee is
 ;; burned by the caller (`register-for-claims`), or the claims are carried from a
 ;; destroyed registration (`update-registration`). Fails if already registered
@@ -467,7 +469,7 @@
         (staker principal)
         (signer principal)
         (bond-index (optional uint))
-        (num-claims uint)
+        (num-cycles uint)
     )
     (let (
             (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
@@ -479,10 +481,10 @@
         )
         (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
         (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
-        (asserts! (> num-claims u0) ERR_INSUFFICIENT_FEE)
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         (map-set registrations key {
             bond-index: bond-index,
-            remaining-claims: num-claims,
+            remaining-cycles: num-cycles,
             next-reward-cycle: (max-uint (get first-reward-cycle position) current-reward),
             last-claim-dist-cycle: none,
         })
@@ -500,7 +502,7 @@
 ;;                  pox-5 reports for the position, and every sweep claims
 ;;                  from it to the staker.
 ;;   bond-index     none for an STX stake, (some n) for bond n.
-;;   fee            STX paid, buying min(fee / fee-per-claim, 192) claims. Only
+;;   fee            STX paid, buying min(fee / fee-per-cycle, 192) claims. Only
 ;;                  the used portion is burned; any sub-fee remainder stays with
 ;;                  the caller, so the contract never custodies STX.
 ;; The first claim targets max(first-reward-cycle, current reward cycle): an
@@ -515,28 +517,33 @@
         (fee uint)
     )
     (let (
-            (caller tx-sender)
-            (price (var-get fee-per-claim))
-            (num-claims (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
+            (price (var-get fee-per-cycle))
+            (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
             ;; An admin can register a staker for free
-            (burned (if (is-admin caller) u0 (* num-claims price)))
+            (burned (if (is-admin tx-sender)
+                u0
+                (* num-cycles price)
+            ))
         )
-        (asserts! (> num-claims u0) ERR_INSUFFICIENT_FEE)
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         (if (> burned u0)
-            (begin (try! (stx-burn? burned caller)) true)
+            (begin
+                (try! (stx-burn? burned tx-sender))
+                true
+            )
             true
         )
-        (try! (create-registration staker (contract-of signer-manager) bond-index num-claims))
+        (try! (create-registration staker (contract-of signer-manager) bond-index num-cycles))
         (print {
             topic: "register-for-claims",
             staker: staker,
-            registrant: caller,
+            registrant: tx-sender,
             signer-manager: (contract-of signer-manager),
             bond-index: bond-index,
-            num-claims: num-claims,
+            num-cycles: num-cycles,
             burned: burned,
         })
-        (ok num-claims)
+        (ok num-cycles)
     )
 )
 
@@ -555,26 +562,25 @@
         (new-bond-index (optional uint))
     )
     (let (
-            (caller tx-sender)
             (carried (try! (destroy-registration {
-                staker: caller,
+                staker: tx-sender,
                 signer-manager: old-signer-manager,
             })))
         )
-        (try! (create-registration caller new-signer-manager new-bond-index carried))
+        (try! (create-registration tx-sender new-signer-manager new-bond-index carried))
         (print {
             topic: "update-registration",
-            staker: caller,
+            staker: tx-sender,
             old-signer-manager: old-signer-manager,
             new-signer-manager: new-signer-manager,
-            num-claims: carried,
+            num-cycles: carried,
         })
         (ok carried)
     )
 )
 
 ;; Bookkeeping only. Advance a registration one distribution cycle: mark it
-;; claimed in `current-dist-cycle`, decrement remaining-claims (deleting the
+;; claimed in `current-dist-cycle`, decrement remaining-cycles (deleting the
 ;; registration, and its linked-list node, at zero), and advance
 ;; next-reward-cycle by one once current-reward-cycle has passed it. Shared by the
 ;; ok and empty-cycle paths of process-reward-claim-impl.
@@ -586,14 +592,14 @@
         })
         (registration {
             bond-index: (optional uint),
-            remaining-claims: uint,
+            remaining-cycles: uint,
             next-reward-cycle: uint,
             last-claim-dist-cycle: (optional uint),
         })
         (current-reward-cycle uint)
         (current-dist-cycle uint)
     )
-    (if (<= (get remaining-claims registration) u1)
+    (if (<= (get remaining-cycles registration) u1)
         ;; last claim: drop the registration entirely
         (begin
             (map-delete registrations key)
@@ -602,7 +608,7 @@
         (begin
             (map-set registrations key
                 (merge registration {
-                    remaining-claims: (- (get remaining-claims registration) u1),
+                    remaining-cycles: (- (get remaining-cycles registration) u1),
                     next-reward-cycle: (if (> current-reward-cycle (get next-reward-cycle registration))
                         (+ (get next-reward-cycle registration) u1)
                         (get next-reward-cycle registration)
@@ -647,9 +653,9 @@
             (reward-cycle (get next-reward-cycle registration))
             (bond-index (get bond-index registration))
         )
-        (asserts! (> (get remaining-claims registration) u0) ERR_NOT_REGISTERED)
+        (asserts! (> (get remaining-cycles registration) u0) ERR_NOT_REGISTERED)
         (asserts! (not (is-eq (get last-claim-dist-cycle registration) (some current-dist-cycle)))
-            ERR_ALREADY_SWEPT
+            ERR_ALREADY_CLAIMED
         )
         (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
             claim-result
