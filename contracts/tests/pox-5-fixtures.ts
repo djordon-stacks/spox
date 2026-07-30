@@ -30,6 +30,7 @@ export const wallet3 = accounts.get("wallet_3")!;
 export const wallet4 = accounts.get("wallet_4")!;
 
 export const SIGNER_MANAGER = `${deployer}.signer-manager`;
+export const MOCK_SIGNER_MANAGER = `${deployer}.mock-signer-manager`;
 export const SWEEP_REGISTRY = `${deployer}.reward-claim-registry`;
 export const SBTC_TOKEN =
   "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
@@ -52,6 +53,11 @@ export const BASIS_POINTS = 10_000n;
 const POX5_SIGNER_DOMAIN = { name: "pox-5-signer", version: "1.0.0" };
 /** simnet runs with the testnet chain-id. */
 const CHAIN_ID = 2147483648;
+
+// Distinct signer keys for the two signer-managers. Any valid secp256k1 private
+// key works; they only need to differ so each signer registers its own key.
+export const SIGNER_PRIVATE_KEY = "a".repeat(63) + "1";
+export const MOCK_SIGNER_PRIVATE_KEY = "b".repeat(63) + "2";
 
 // reward-claim-registry error codes
 export const ERR_NOT_REGISTERED = 600n;
@@ -203,7 +209,7 @@ function signSignerKeyGrant(
  * `register-self` performs both steps and is admin-only, so it runs as deployer
  * (the signer-manager's default admin).
  */
-export function registerSignerManager(privateKey = "a".repeat(63) + "1") {
+export function registerSignerManager(privateKey: string) {
   const authId = authIdCounter++;
   const signerKey = compressPublicKey(privateKeyToPublic(privateKey));
   const signerSig = signSignerKeyGrant(SIGNER_MANAGER, authId, privateKey);
@@ -220,6 +226,52 @@ export function registerSignerManager(privateKey = "a".repeat(63) + "1") {
   );
 }
 
+/**
+ * Register the mock-signer-manager with pox-5 as a real signer. Its permissive
+ * validate-stake! lets a wallet hold a genuine pox-5 position under it, so it can
+ * serve as a second signer-manager to move a registration to.
+ */
+export function registerMockSignerManager(privateKey: string) {
+  const authId = authIdCounter++;
+  const signerKey = compressPublicKey(privateKeyToPublic(privateKey));
+  const signerSig = signSignerKeyGrant(MOCK_SIGNER_MANAGER, authId, privateKey);
+  return simnet.callPublicFn(
+    "mock-signer-manager",
+    "register-self",
+    [
+      Cl.principal(MOCK_SIGNER_MANAGER),
+      Cl.bufferFromHex(signerKey),
+      Cl.uint(authId),
+      Cl.bufferFromHex(signerSig),
+    ],
+    deployer,
+  );
+}
+
+/**
+ * Move `staker`'s STX stake from `oldSigner` to `newSigner` via pox-5
+ * stake-update (no term extension, no amount increase). Afterwards pox-5 reports
+ * `newSigner` as the staker's signer.
+ */
+export function stakeUpdate(
+  staker: string,
+  newSigner: string,
+  oldSigner: string,
+) {
+  return simnet.callPublicFn(
+    POX5,
+    "stake-update",
+    [
+      Cl.principal(newSigner),
+      Cl.principal(oldSigner),
+      Cl.uint(0),
+      Cl.uint(0),
+      Cl.none(),
+    ],
+    staker,
+  );
+}
+
 /** A valid pox-addr (p2pkh, version 0x00, 20-byte hash) for the L1 path. */
 export const POX_ADDR = {
   version: Uint8Array.from([0x00]),
@@ -230,7 +282,7 @@ export const POX_ADDR = {
  * Encode pox-addr calldata the way signer-manager's validate-stake! expects:
  * a consensus-serialized `{ pox-addr: { version, hashbytes }, max-fee }`.
  */
-export function poxAddrCalldata(maxFee = 100n) {
+export function poxAddrCalldata(maxFee: bigint) {
   const cv = Cl.tuple({
     "pox-addr": Cl.tuple({
       version: Cl.buffer(POX_ADDR.version),
@@ -274,7 +326,7 @@ export function bondPeriodToRewardCycle(bondIndex: bigint): bigint {
  * an allowlist covering `stakers`. Cribbed from core-contract-tests'
  * "setting up and starting a bond" scenario.
  */
-export function setupBond(bondIndex: bigint, stakers: string[], maxSats = 100_000_000n) {
+export function setupBond(bondIndex: bigint, stakers: string[], maxSats: bigint) {
   return simnet.callPublicFn(
     POX5,
     "setup-bond",
@@ -302,7 +354,7 @@ export function setupBond(bondIndex: bigint, stakers: string[], maxSats = 100_00
 export function registerForBond(
   staker: string,
   bondIndex: bigint,
-  sats = 5_000_000n,
+  sats: bigint,
 ) {
   return simnet.callPublicFn(
     POX5,
@@ -321,9 +373,9 @@ export function registerForBond(
 /** Stake `amount` uSTX under the real signer-manager WITH an L1 pox-addr. */
 export function stakeWithPoxAddr(
   staker: string,
-  amount = SIGNER_SET_MIN_USTX,
-  numCycles = 2n,
-  maxFee = 100n,
+  amount: bigint,
+  numCycles: bigint,
+  maxFee: bigint,
 ) {
   return simnet.callPublicFn(
     POX5,
@@ -340,11 +392,7 @@ export function stakeWithPoxAddr(
 }
 
 /** Stake `amount` uSTX under the real signer-manager, as `staker`. */
-export function stakeFor(
-  staker: string,
-  amount = SIGNER_SET_MIN_USTX,
-  numCycles = 2n,
-) {
+export function stakeFor(staker: string, amount: bigint, numCycles: bigint) {
   return simnet.callPublicFn(
     POX5,
     "stake",
@@ -365,7 +413,7 @@ export function stakeFor(
  * then signer-manager claim-rewards (which is what makes rewards visible to
  * stakers, and what process-reward-claim requires to have happened).
  */
-export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle = 1n) {
+export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle: bigint) {
   simnet.callPublicFn(
     SBTC_TOKEN,
     "transfer",
@@ -389,9 +437,9 @@ export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle = 1n) {
 export function registerForSweep(
   staker: string,
   fee: bigint,
-  sender = staker,
-  signerManager = SIGNER_MANAGER,
-  bondIndex: OptionalCV<UIntCV> = Cl.none(),
+  sender: string,
+  signerManager: string,
+  bondIndex: OptionalCV<UIntCV>,
 ) {
   return simnet.callPublicFn(
     "reward-claim-registry",
@@ -403,8 +451,8 @@ export function registerForSweep(
 
 export function performSweep(
   staker: string,
-  sender = staker,
-  signerManager = SIGNER_MANAGER,
+  sender: string,
+  signerManager: string,
 ) {
   return simnet.callPublicFn(
     "reward-claim-registry",
@@ -414,7 +462,7 @@ export function performSweep(
   );
 }
 
-export function getRegistration(staker: string, signerManager = SIGNER_MANAGER) {
+export function getRegistration(staker: string, signerManager: string) {
   return simnet.callReadOnlyFn(
     "reward-claim-registry",
     "get-registration",
@@ -465,7 +513,7 @@ export function rejectWithdrawal(requestId: bigint) {
 }
 
 /** sBTC signers ACCEPT withdrawal `requestId` -> status becomes (some true). */
-export function acceptWithdrawal(requestId: bigint, fee = 30n) {
+export function acceptWithdrawal(requestId: bigint, fee: bigint) {
   const height = BigInt(simnet.burnBlockHeight - 1);
   return simnet.callPublicFn(
     SBTC_WITHDRAWAL,
@@ -484,23 +532,16 @@ export function acceptWithdrawal(requestId: bigint, fee = 30n) {
   );
 }
 
-export function keyTuple(staker: string, signerManager = SIGNER_MANAGER) {
-  return Cl.tuple({
-    "staker": Cl.principal(staker),
-    "signer-manager": Cl.principal(signerManager),
-  });
-}
-
 /**
  * Full happy-path setup: init pox-5, register the signer-manager, stake
  * `stakers`, then pull `rewards` sBTC through to the signer-manager so each
  * staker has something claimable for reward cycle 1.
  */
-export function setupClaimableStakers(stakers: string[], rewards = 2000n) {
+export function setupClaimableStakers(stakers: string[], rewards: bigint) {
   initPox5();
-  registerSignerManager();
+  registerSignerManager(SIGNER_PRIVATE_KEY);
   for (const staker of stakers) {
-    stakeFor(staker);
+    stakeFor(staker, SIGNER_SET_MIN_USTX, 2n);
   }
-  fundAndClaimSignerRewards(rewards);
+  fundAndClaimSignerRewards(rewards, 1n);
 }

@@ -10,7 +10,11 @@ import {
   ERR_UNKNOWN_PENDING_WITHDRAWAL,
   ERR_ZERO_FEE,
   FEE_PER_CLAIM,
+  MOCK_SIGNER_MANAGER,
+  MOCK_SIGNER_PRIVATE_KEY,
   SIGNER_MANAGER,
+  SIGNER_PRIVATE_KEY,
+  SIGNER_SET_MIN_USTX,
   acceptWithdrawal,
   bondPeriodToRewardCycle,
   currentDistributionCycle,
@@ -23,11 +27,13 @@ import {
   performSweep,
   registerForBond,
   registerForSweep,
+  registerMockSignerManager,
   registerSignerManager,
   rejectWithdrawal,
   sbtcBalance,
   setupBond,
   stakeFor,
+  stakeUpdate,
   stakeWithPoxAddr,
   stxBalance,
   wallet1,
@@ -163,29 +169,29 @@ describe("set-fee-per-cycle", () => {
 describe("register-for-claims", () => {
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    stakeFor(wallet1);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
   });
 
   it("registers a real staking position and returns sweeps bought", () => {
-    const { result } = registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    const { result } = registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
     expect(result).toBeOk(Cl.uint(3));
   });
 
   it("burns exactly the used portion of the fee", () => {
     const before = stxBalance(wallet1);
     // 3.5 sweeps' worth -> only 3 whole sweeps bought and burned
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM + FEE_PER_CLAIM / 2n);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM + FEE_PER_CLAIM / 2n, wallet1, SIGNER_MANAGER, Cl.none());
     expect(before - stxBalance(wallet1)).toBe(3n * FEE_PER_CLAIM);
   });
 
   it("burns nothing when an admin registers", () => {
     // deployer is the default admin
     const before = stxBalance(deployer);
-    const { result } = registerForSweep(wallet1, 3n * FEE_PER_CLAIM, deployer);
+    const { result } = registerForSweep(wallet1, 3n * FEE_PER_CLAIM, deployer, SIGNER_MANAGER, Cl.none());
     expect(result).toBeOk(Cl.uint(3)); // still buys 3 sweeps
     expect(stxBalance(deployer)).toBe(before); // but nothing is burned
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(3),
@@ -198,34 +204,34 @@ describe("register-for-claims", () => {
   it("caps sweeps bought at MAX_DISTRIBUTION_CYCLES (192)", () => {
     // pay for 500 sweeps; only 192 are bought/burned
     const before = stxBalance(wallet1);
-    const { result } = registerForSweep(wallet1, 500n * FEE_PER_CLAIM);
+    const { result } = registerForSweep(wallet1, 500n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
     expect(result).toBeOk(Cl.uint(192));
     expect(before - stxBalance(wallet1)).toBe(192n * FEE_PER_CLAIM);
   });
 
   it("rejects a fee too small to buy a single sweep", () => {
-    expect(registerForSweep(wallet1, FEE_PER_CLAIM - 1n).result).toBeErr(
+    expect(registerForSweep(wallet1, FEE_PER_CLAIM - 1n, wallet1, SIGNER_MANAGER, Cl.none()).result).toBeErr(
       Cl.uint(ERR_INSUFFICIENT_FEE),
     );
   });
 
   it("rejects a staker with no pox-5 position", () => {
     // wallet3 never staked
-    expect(registerForSweep(wallet3, FEE_PER_CLAIM).result).toBeErr(
+    expect(registerForSweep(wallet3, FEE_PER_CLAIM, wallet3, SIGNER_MANAGER, Cl.none()).result).toBeErr(
       Cl.uint(ERR_NO_CURRENT_POSITION),
     );
 
     // Now we stake and registration succeeds
-    stakeFor(wallet3);
-    const { result } = registerForSweep(wallet3, FEE_PER_CLAIM);
+    stakeFor(wallet3, SIGNER_SET_MIN_USTX, 2n);
+    const { result } = registerForSweep(wallet3, FEE_PER_CLAIM, wallet3, SIGNER_MANAGER, Cl.none());
     expect(result).toBeOk(Cl.uint(1));
   });
 
   it("rejects a duplicate registration", () => {
-    const { result } = registerForSweep(wallet1, FEE_PER_CLAIM);
+    const { result } = registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
     expect(result).toBeOk(Cl.uint(1));
 
-    expect(registerForSweep(wallet1, FEE_PER_CLAIM).result).toBeErr(
+    expect(registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none()).result).toBeErr(
       Cl.uint(ERR_ALREADY_REGISTERED),
     );
   });
@@ -233,12 +239,12 @@ describe("register-for-claims", () => {
   it("is permissionless: a third party can register and pay for a staker", () => {
     // Wallet 2 is registering wallet 1, so it pays.
     const before = stxBalance(wallet2);
-    const { result } = registerForSweep(wallet1, FEE_PER_CLAIM, wallet2);
+    const { result } = registerForSweep(wallet1, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
     expect(result).toBeOk(Cl.uint(1));
     expect(before - stxBalance(wallet2)).toBe(FEE_PER_CLAIM); // payer is wallet2
 
     // The registration belongs to the staker (wallet1), not the payer (wallet2).
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(1),
@@ -246,15 +252,15 @@ describe("register-for-claims", () => {
         "last-claim-dist-cycle": Cl.none(),
       }),
     );
-    expect(getRegistration(wallet2)).toBeNone();
+    expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeNone();
   });
 });
 
 describe("get-due-claims", () => {
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    stakeFor(wallet1);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
   });
 
   it("is empty when nothing is registered", () => {
@@ -262,14 +268,14 @@ describe("get-due-claims", () => {
   });
 
   it("lists a fresh registration as due", () => {
-    registerForSweep(wallet1, FEE_PER_CLAIM);
+    registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
   });
 
   it("walks multiple registrations in insertion order", () => {
-    stakeFor(wallet2);
-    registerForSweep(wallet1, FEE_PER_CLAIM);
-    registerForSweep(wallet2, FEE_PER_CLAIM);
+    stakeFor(wallet2, SIGNER_SET_MIN_USTX, 2n);
+    registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForSweep(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
     // the linked list appends at the tail, so the walk is wallet1 then wallet2
     expect(getDueSweeps()).toBeOk(
       Cl.list([registered(wallet1), registered(wallet2)]),
@@ -277,9 +283,9 @@ describe("get-due-claims", () => {
   });
 
   it("drops a registration from the due list once it is swept this cycle", () => {
-    stakeFor(wallet2);
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
-    registerForSweep(wallet2, 3n * FEE_PER_CLAIM);
+    stakeFor(wallet2, SIGNER_SET_MIN_USTX, 2n);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForSweep(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
 
     // both are due to start
     expect(getDueSweeps()).toBeOk(
@@ -288,13 +294,13 @@ describe("get-due-claims", () => {
 
     // sweep only wallet1 (empty-cycle advance: no rewards funded)
     const distCycle = currentDistributionCycle();
-    expect(performSweep(wallet1).result).toBeOk(Cl.none());
+    expect(performSweep(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
 
     // wallet1 was swept this distribution cycle, so only wallet2 stays due
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet2)]));
 
     // wallet1's registration still exists (not deleted) -- just not due
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(2), // 3 -> 2
@@ -303,7 +309,7 @@ describe("get-due-claims", () => {
       }),
     );
 
-    expect(getRegistration(wallet2)).toBeSome(
+    expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(3),
@@ -317,18 +323,18 @@ describe("get-due-claims", () => {
 describe("process-reward-claim (direct sBTC payout)", () => {
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    stakeFor(wallet1);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
   });
 
   it("pays the staker its earned sBTC and decrements the registration", () => {
-    fundAndClaimSignerRewards(2000n);
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
 
     // The registration exists and a sweep is now due
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
 
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(3),
@@ -336,11 +342,11 @@ describe("process-reward-claim (direct sBTC payout)", () => {
         "last-claim-dist-cycle": Cl.none(),
       }),
     );
-    
+
     const stakerBefore = sbtcBalance(wallet1);
     const managerBefore = sbtcBalance(SIGNER_MANAGER);
     const distCycle = currentDistributionCycle();
-    const { result } = performSweep(wallet1, wallet2); // permissionless caller
+    const { result } = performSweep(wallet1, wallet2, SIGNER_MANAGER); // permissionless caller
     // no pox-addr -> direct payout -> no withdrawal request
     expect(result).toBeOk(Cl.none());
 
@@ -351,7 +357,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(managerBefore - sbtcBalance(SIGNER_MANAGER)).toBe(paid);
 
     // registration decremented: one sweep consumed, marked swept this cycle
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(2), // 3 -> 2
@@ -367,9 +373,9 @@ describe("process-reward-claim (direct sBTC payout)", () => {
   it("advances past a genuinely empty cycle without stalling", () => {
     // registered, but no rewards were ever funded/claimed:
     // claim errs u1001 AND get-earned == 0 -> advance, returns (ok none)
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
 
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(3),
@@ -379,12 +385,12 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     );
 
     const distCycle = currentDistributionCycle();
-    const { result } = performSweep(wallet1);
+    const { result } = performSweep(wallet1, wallet1, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.none());
 
     // the empty-cycle path still consumes a sweep and marks it swept, without
     // moving any sBTC
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(2), // 3 -> 2
@@ -397,28 +403,28 @@ describe("process-reward-claim (direct sBTC payout)", () => {
   });
 
   it("errors for a staker with no registration", () => {
-    expect(performSweep(wallet1).result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
+    expect(performSweep(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
   });
 
   it("errors when already swept this distribution cycle", () => {
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
-    performSweep(wallet1); // empty-cycle advance, marks swept
-    expect(performSweep(wallet1).result).toBeErr(Cl.uint(ERR_ALREADY_CLAIMED));
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    performSweep(wallet1, wallet1, SIGNER_MANAGER); // empty-cycle advance, marks swept
+    expect(performSweep(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(Cl.uint(ERR_ALREADY_CLAIMED));
   });
 });
 
 describe("process-reward-claims (batch)", () => {
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    stakeFor(wallet1);
-    stakeFor(wallet2);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
+    stakeFor(wallet2, SIGNER_SET_MIN_USTX, 2n);
   });
 
   it("sweeps multiple stakers and returns the count", () => {
-    fundAndClaimSignerRewards(2000n);
-    registerForSweep(wallet1, FEE_PER_CLAIM);
-    registerForSweep(wallet2, FEE_PER_CLAIM);
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForSweep(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
 
     // both are due to start
     expect(getDueSweeps()).toBeOk(
@@ -438,7 +444,7 @@ describe("process-reward-claims (batch)", () => {
   });
 
   it("skips unregistered stakers without aborting the batch", () => {
-    registerForSweep(wallet1, FEE_PER_CLAIM);
+    registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
 
     // wallet2 is skipped, so only wallet1 is due
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
@@ -458,34 +464,37 @@ describe("process-reward-claims (batch)", () => {
 });
 
 describe("update-registration", () => {
-  // Only one real signer-manager is deployed, so the carry happy path is
-  // exercised by moving the {staker, signer-manager} registration onto the same
-  // position: destroy + recreate, carrying the sweeps it had left. That is
-  // enough to prove the carry mechanics (no fee, count preserved, state reset)
-  // without a second signer to move between.
+  // A second signer-manager (the mock) is registered with pox-5 so a
+  // registration can be genuinely moved between managers. wallet1 stakes under
+  // the real signer-manager; the carry path moves both its pox-5 stake (via
+  // stake-update) and its registration onto the mock.
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    stakeFor(wallet1);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    registerMockSignerManager(MOCK_SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
   });
 
-  it("carries all remaining sweeps to the recreated registration, burning nothing", () => {
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+  it("carries all its sweeps to the mock signer-manager, burning nothing", () => {
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    // move wallet1's pox-5 stake to the mock, so it is the signer pox-5 reports
+    stakeUpdate(wallet1, MOCK_SIGNER_MANAGER, SIGNER_MANAGER);
 
     const before = stxBalance(wallet1);
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
       wallet1,
     );
-    expect(result).toBeOk(Cl.uint(3)); // all 3 sweeps carried over
+    expect(result).toBeOk(Cl.uint(3)); // all 3 sweeps carried across
 
     // the carry reuses already-bought sweeps, so nothing is burned
     expect(stxBalance(wallet1)).toBe(before);
 
-    // the registration is back with the same 3 sweeps and fresh state
-    expect(getRegistration(wallet1)).toBeSome(
+    // the old key is gone; the mock key now holds the carried sweeps
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
+    expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(3),
@@ -493,25 +502,24 @@ describe("update-registration", () => {
         "last-claim-dist-cycle": Cl.none(),
       }),
     );
-    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
   });
 
   it("carries only the sweeps left after some were consumed", () => {
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
-    // consume one sweep (empty-cycle advance): 3 -> 2, marked swept this cycle
-    performSweep(wallet1);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    // consume one sweep (empty-cycle advance): 3 -> 2
+    performSweep(wallet1, wallet1, SIGNER_MANAGER);
+    stakeUpdate(wallet1, MOCK_SIGNER_MANAGER, SIGNER_MANAGER);
 
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
       wallet1,
     );
     expect(result).toBeOk(Cl.uint(2)); // only the 2 remaining sweeps carry over
 
-    // recreating clears last-claim-dist-cycle, so the staker is due again THIS
-    // distribution cycle -- re-registering re-opens the position.
-    expect(getRegistration(wallet1)).toBeSome(
+    // recreating under the mock clears last-claim-dist-cycle
+    expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(2),
@@ -519,7 +527,7 @@ describe("update-registration", () => {
         "last-claim-dist-cycle": Cl.none(),
       }),
     );
-    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
   });
 
   it("rejects when the caller has no registration to carry", () => {
@@ -527,19 +535,19 @@ describe("update-registration", () => {
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
       wallet1,
     );
     expect(result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
   });
 
   it("acts on the caller's own registration, not another staker's", () => {
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
     // wallet2 has no registration; its update fails even though wallet1 has one
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
       wallet2,
     );
     expect(result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
@@ -548,18 +556,18 @@ describe("update-registration", () => {
   });
 
   it("is atomic: a failed carry leaves the original registration intact", () => {
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
-    // moving to a signer-manager the staker has no position under fails on the
-    // create side with error ERR_NO_CURRENT_POSITION.
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    // wallet1 has no position under the mock (its stake is still under the real
+    // signer-manager), so the create side fails; the destroy must roll back.
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(wallet2), Cl.none()],
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
       wallet1,
     );
     expect(result).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
     // original registration still intact
-    expect(getRegistration(wallet1)).toBeSome(
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       Cl.tuple({
         "bond-index": Cl.none(),
         "remaining-cycles": Cl.uint(3),
@@ -576,9 +584,9 @@ describe("bond path", () => {
 
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    setupBond(BOND_INDEX, [wallet1]);
-    registerForBond(wallet1, BOND_INDEX);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    setupBond(BOND_INDEX, [wallet1], 100_000_000n);
+    registerForBond(wallet1, BOND_INDEX, 5_000_000n);
   });
 
   it("get-position resolves the bond membership under the signer-manager", () => {
@@ -610,7 +618,7 @@ describe("bond path", () => {
       Cl.list([
         Cl.tuple({
           "signer-manager": Cl.principal(SIGNER_MANAGER),
-          staker: Cl.principal(wallet1),
+          "staker": Cl.principal(wallet1),
           "bond-index": Cl.some(Cl.uint(BOND_INDEX)),
           "reward-cycle": Cl.uint(bondPeriodToRewardCycle(BOND_INDEX)),
         }),
@@ -628,13 +636,13 @@ describe("bond path", () => {
     );
     // no bond rewards funded: claim errs u1001 and get-earned(signer, cycle,
     // (some 0)) == 0 -> advance past the cycle via the bond-index path
-    expect(performSweep(wallet1).result).toBeOk(Cl.none());
+    expect(performSweep(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
     expect(getDueSweeps()).toBeOk(Cl.list([]));
   });
 
   it("a bond staker cannot also register the STX-stake position (none)", () => {
     // wallet1 bonded but never STX-staked, so the none-bond position is absent
-    expect(registerForSweep(wallet1, FEE_PER_CLAIM).result).toBeErr(
+    expect(registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none()).result).toBeErr(
       Cl.uint(ERR_NO_CURRENT_POSITION),
     );
   });
@@ -643,14 +651,14 @@ describe("bond path", () => {
 describe("L1 withdrawal path + settlements", () => {
   beforeEach(() => {
     initPox5();
-    registerSignerManager();
-    stakeWithPoxAddr(wallet1); // pox-addr present -> rewards route to L1
-    fundAndClaimSignerRewards(2000n);
-    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeWithPoxAddr(wallet1, SIGNER_SET_MIN_USTX, 2n, 100n); // pox-addr present -> rewards route to L1
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
   });
 
   it("records a withdrawal request-id and lists it as a due settlement", () => {
-    const { result } = performSweep(wallet1);
+    const { result } = performSweep(wallet1, wallet1, SIGNER_MANAGER);
     // pox-addr present -> the first L1 withdrawal request-id (1) is returned
     expect(result).toBeOk(Cl.some(Cl.uint(1)));
 
@@ -658,16 +666,16 @@ describe("L1 withdrawal path + settlements", () => {
   });
 
   it("settles an ACCEPTED withdrawal and clears it from the settlement list", () => {
-    performSweep(wallet1);
+    performSweep(wallet1, wallet1, SIGNER_MANAGER);
     // sBTC signers accept request 1, then anyone settles it
-    acceptWithdrawal(1n);
+    acceptWithdrawal(1n, 30n);
     const { result } = settlePendingWithdrawal(wallet1, 1n, wallet2);
     expect(result).toBeOk(Cl.bool(true));
     expect(getDueSettlements()).toBeOk(Cl.list([]));
   });
 
   it("settles a REJECTED withdrawal (reclaims to the staker) and clears it", () => {
-    performSweep(wallet1);
+    performSweep(wallet1, wallet1, SIGNER_MANAGER);
     rejectWithdrawal(1n);
     const { result } = settlePendingWithdrawal(wallet1, 1n, wallet2);
     expect(result).toBeOk(Cl.bool(true));
@@ -675,7 +683,7 @@ describe("L1 withdrawal path + settlements", () => {
   });
 
   it("is a no-op while the withdrawal is still pending", () => {
-    performSweep(wallet1);
+    performSweep(wallet1, wallet1, SIGNER_MANAGER);
     // status not set -> still pending -> ok false, stays listed
     expect(settlePendingWithdrawal(wallet1, 1n, wallet2).result).toBeOk(Cl.bool(false));
     // still listed as awaiting settlement
@@ -683,15 +691,15 @@ describe("L1 withdrawal path + settlements", () => {
   });
 
   it("errors on an unknown pending withdrawal", () => {
-    performSweep(wallet1);
+    performSweep(wallet1, wallet1, SIGNER_MANAGER);
     expect(settlePendingWithdrawal(wallet1, 9999n, wallet2).result).toBeErr(
       Cl.uint(ERR_UNKNOWN_PENDING_WITHDRAWAL),
     );
   });
 
   it("batch settle-pending-withdrawals resolves accepted items and counts them", () => {
-    performSweep(wallet1);
-    acceptWithdrawal(1n);
+    performSweep(wallet1, wallet1, SIGNER_MANAGER);
+    acceptWithdrawal(1n, 30n);
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "settle-pending-withdrawals",
