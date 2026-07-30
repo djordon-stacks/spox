@@ -518,11 +518,14 @@
             (caller tx-sender)
             (price (var-get fee-per-sweep))
             (num-sweeps (min-uint (/ fee price) MAX_SWEEP_DISTRIBUTION_CYCLES))
+            ;; An admin can register a staker for free
+            (burned (if (is-admin caller) u0 (* num-sweeps price)))
         )
         (asserts! (> num-sweeps u0) ERR_INSUFFICIENT_FEE)
-        ;; burn only the used portion; the sub-fee remainder never leaves the
-        ;; caller, so the contract never holds STX
-        (try! (stx-burn? (* num-sweeps price) caller))
+        (if (> burned u0)
+            (begin (try! (stx-burn? burned caller)) true)
+            true
+        )
         (try! (create-registration staker (contract-of signer-manager) bond-index num-sweeps))
         (print {
             topic: "register-for-sweep",
@@ -531,7 +534,7 @@
             signer-manager: (contract-of signer-manager),
             bond-index: bond-index,
             num-sweeps: num-sweeps,
-            burned: (* num-sweeps price),
+            burned: burned,
         })
         (ok num-sweeps)
     )

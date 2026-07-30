@@ -5,16 +5,10 @@ authors = []
 telemetry = false
 cache_dir = "./.cache"
 
-# The sBTC contracts are fetched from mainnet and deployed at their real
+# The sBTC withdrawal contract is fetched from mainnet and deployed at its real
 # addresses -- the exact principals that pox-5, signer-manager, and
-# sweep-registry reference. Sources are cached in `cache_dir`, so only the
+# sweep-registry reference. The source is cached in `cache_dir`, so only the
 # first fetch needs network access.
-[[project.requirements]]
-contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry"
-
-[[project.requirements]]
-contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token"
-
 [[project.requirements]]
 contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal"
 

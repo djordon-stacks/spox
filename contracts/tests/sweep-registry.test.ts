@@ -179,6 +179,22 @@ describe("register-for-sweep", () => {
     expect(before - stxBalance(wallet1)).toBe(3n * FEE_PER_SWEEP);
   });
 
+  it("burns nothing when an admin registers", () => {
+    // deployer is the default admin
+    const before = stxBalance(deployer);
+    const { result } = registerForSweep(wallet1, 3n * FEE_PER_SWEEP, deployer);
+    expect(result).toBeOk(Cl.uint(3)); // still buys 3 sweeps
+    expect(stxBalance(deployer)).toBe(before); // but nothing is burned
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(3),
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.none(),
+      }),
+    );
+  });
+
   it("caps sweeps bought at MAX_SWEEP_DISTRIBUTION_CYCLES (192)", () => {
     // pay for 500 sweeps; only 192 are bought/burned
     const before = stxBalance(wallet1);
