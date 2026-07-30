@@ -5,10 +5,16 @@ authors = []
 telemetry = false
 cache_dir = "./.cache"
 
-# The sBTC withdrawal contract is fetched from mainnet and deployed at its real
-# addresses -- the exact principals that pox-5, signer-manager, and
-# sweep-registry reference. The source is cached in `cache_dir`, so only the
-# first fetch needs network access.
+# The sBTC contracts are fetched from mainnet and deployed at their real
+# addresses, which matches the exact principals pox-5, signer-manager, and
+# sweep-registry reference. Require sbtc-deposit + sbtc-withdrawal (matching
+# core-contract-tests); that transitively brings in sbtc-registry + sbtc-token
+# AND is the combination clarinet recognizes as the sBTC system, so the genesis
+# `sbtc-balance` funding is applied. Requiring fewer leaves sbtc-token unfunded.
+# The sources are cached, so only the first fetch requires network access.
+[[project.requirements]]
+contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit"
+
 [[project.requirements]]
 contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal"
 
