@@ -5,14 +5,24 @@
 ;; The number of max rows returned per get-due-sweeps / get-due-settlements call
 (define-constant DUE_PAGE_SIZE u100) 
 
+;; No registration for this staker and signer-manager combination
 (define-constant ERR_NOT_REGISTERED (err u600))
+;; This staker and signer-manager combination is already registered
 (define-constant ERR_ALREADY_REGISTERED (err u601))
+;; The registration fee is  too small to buy even one sweep
 (define-constant ERR_INSUFFICIENT_FEE (err u602))
+;; The caller is not an admin to an admin only function
 (define-constant ERR_NOT_ADMIN (err u603))
+;; The staker has no active pox-5 position under this signer
 (define-constant ERR_NO_CURRENT_POSITION (err u604))
+;; The registration fee must be greater than zero
 (define-constant ERR_ZERO_FEE (err u605))
+;; The registration was already swept this distribution cycle
 (define-constant ERR_ALREADY_SWEPT (err u606))
+;; This should be unreachable: a registration buys at most 192 sweeps and each sweep
+;; adds at most one pending withdrawal, so the 192-slot list can never overflow
 (define-constant ERR_TOO_MANY_PENDING (err u607))
+;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u608))
 ;; signer-manager's ERR_NO_CLAIMABLE_REWARDS, matched (not propagated) in
 ;; perform-sweep-impl so a genuinely empty cycle advances instead of stalling.
@@ -68,6 +78,17 @@
         next-reward-cycle: uint,
         last-swept-dist-cycle: (optional uint),
     }
+)
+
+;; The registration for {staker, signer-manager}, or none if not registered.
+(define-read-only (get-registration
+        (staker principal)
+        (signer-manager principal)
+    )
+    (map-get? registrations {
+        staker: staker,
+        signer-manager: signer-manager,
+    })
 )
 
 (define-map registration-ll

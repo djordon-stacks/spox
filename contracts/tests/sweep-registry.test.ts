@@ -17,6 +17,7 @@ import {
   fundAndClaimSignerRewards,
   getDueSettlements,
   getDueSweeps,
+  getRegistration,
   initPox5,
   performSweep,
   registerForBond,
@@ -52,6 +53,15 @@ function registered(staker: string) {
     staker: Cl.principal(staker),
     "bond-index": Cl.none(),
     "reward-cycle": Cl.uint(1),
+  });
+}
+
+// A get-due-settlements row: {staker, signer-manager, request-ids}.
+function settlement(staker: string, requestIds: bigint[]) {
+  return Cl.tuple({
+    staker: Cl.principal(staker),
+    "signer-manager": Cl.principal(SIGNER_MANAGER),
+    "request-ids": Cl.list(requestIds.map((id) => Cl.uint(id))),
   });
 }
 
@@ -187,20 +197,38 @@ describe("register-for-sweep", () => {
     expect(registerForSweep(wallet3, FEE_PER_SWEEP).result).toBeErr(
       Cl.uint(ERR_NO_CURRENT_POSITION),
     );
+
+    stakeFor(wallet3);
+    const { result } = registerForSweep(wallet3, FEE_PER_SWEEP);
+    expect(result).toBeOk(Cl.uint(1));
   });
 
   it("rejects a duplicate registration", () => {
-    registerForSweep(wallet1, FEE_PER_SWEEP);
+    const { result } = registerForSweep(wallet1, FEE_PER_SWEEP);
+    expect(result).toBeOk(Cl.uint(1));
+
     expect(registerForSweep(wallet1, FEE_PER_SWEEP).result).toBeErr(
       Cl.uint(ERR_ALREADY_REGISTERED),
     );
   });
 
   it("is permissionless: a third party can register and pay for a staker", () => {
+    // Wallet 2 is registering wallet 1, so it pays.
     const before = stxBalance(wallet2);
     const { result } = registerForSweep(wallet1, FEE_PER_SWEEP, wallet2);
     expect(result).toBeOk(Cl.uint(1));
     expect(before - stxBalance(wallet2)).toBe(FEE_PER_SWEEP); // payer is wallet2
+
+    // The registration belongs to the staker (wallet1), not the payer (wallet2).
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(1),
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.none(),
+      }),
+    );
+    expect(getRegistration(wallet2)).toBeNone();
   });
 });
 
@@ -220,12 +248,14 @@ describe("get-due-sweeps", () => {
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
   });
 
-  it("walks multiple registrations", () => {
+  it("walks multiple registrations in insertion order", () => {
     stakeFor(wallet2);
     registerForSweep(wallet1, FEE_PER_SWEEP);
     registerForSweep(wallet2, FEE_PER_SWEEP);
-    const { value: rows } = getDueSweeps() as unknown as { value: { value: unknown[] } };
-    expect(rows.value.length).toBe(2);
+    // the linked list appends at the tail, so the walk is wallet1 then wallet2
+    expect(getDueSweeps()).toBeOk(
+      Cl.list([registered(wallet1), registered(wallet2)]),
+    );
   });
 });
 
@@ -410,10 +440,7 @@ describe("L1 withdrawal path + settlements", () => {
     // pox-addr present -> the first L1 withdrawal request-id (1) is returned
     expect(result).toBeOk(Cl.some(Cl.uint(1)));
 
-    const settlements = getDueSettlements() as unknown as {
-      value: { value: unknown[] };
-    };
-    expect(settlements.value.value.length).toBe(1);
+    expect(getDueSettlements()).toBeOk(Cl.list([settlement(wallet1, [1n])]));
   });
 
   it("settles an ACCEPTED withdrawal and clears it from the settlement list", () => {
@@ -437,8 +464,8 @@ describe("L1 withdrawal path + settlements", () => {
     performSweep(wallet1);
     // status not set -> still pending -> ok false, stays listed
     expect(settlePendingWithdrawal(wallet1, 1n, wallet2).result).toBeOk(Cl.bool(false));
-    const settlements = getDueSettlements() as unknown as { value: { value: unknown[] } };
-    expect(settlements.value.value.length).toBe(1);
+    // still listed as awaiting settlement
+    expect(getDueSettlements()).toBeOk(Cl.list([settlement(wallet1, [1n])]));
   });
 
   it("errors on an unknown pending withdrawal", () => {

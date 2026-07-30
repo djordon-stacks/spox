@@ -424,6 +424,15 @@ export function performSweep(
   );
 }
 
+export function getRegistration(staker: string, signerManager = SIGNER_MANAGER) {
+  return simnet.callReadOnlyFn(
+    "sweep-registry",
+    "get-registration",
+    [Cl.principal(staker), Cl.principal(signerManager)],
+    deployer,
+  ).result;
+}
+
 export function getDueSweeps(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
     "sweep-registry",
