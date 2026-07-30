@@ -1,16 +1,18 @@
 (use-trait sweeper-signer-manager-trait .sweeper-traits.sweeper-signer-manager-trait)
 
-(define-constant MAX_SWEEP_DISTRIBUTION_CYCLES u192) ;; longest STX lock in PoX: 96 reward cycles = 192 distribution cycles
-(define-constant DUE_PAGE_SIZE u100) ;; max rows returned per get-due-sweeps / get-due-settlements call
+;; The longest STX lock in PoX-5 is 96 reward cycles, which equals 192 distribution cycles
+(define-constant MAX_SWEEP_DISTRIBUTION_CYCLES u192) 
+;; The number of max rows returned per get-due-sweeps / get-due-settlements call
+(define-constant DUE_PAGE_SIZE u100) 
 
 (define-constant ERR_NOT_REGISTERED (err u600))
 (define-constant ERR_ALREADY_REGISTERED (err u601))
 (define-constant ERR_INSUFFICIENT_FEE (err u602))
 (define-constant ERR_NOT_ADMIN (err u603))
-;; u604 unused: {staker, signer-manager} keying folds "wrong signer" into ERR_NOT_REGISTERED
+
 (define-constant ERR_NO_CURRENT_POSITION (err u605))
 (define-constant ERR_ZERO_FEE (err u606))
-;; u607 unused: the burn model holds no reclaimable balance
+
 (define-constant ERR_ALREADY_SWEPT (err u608))
 (define-constant ERR_TOO_MANY_PENDING (err u609))
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u610))

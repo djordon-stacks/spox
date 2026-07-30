@@ -1,309 +1,398 @@
 import { Cl } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
+import {
+  ERR_ALREADY_REGISTERED,
+  ERR_ALREADY_SWEPT,
+  ERR_INSUFFICIENT_FEE,
+  ERR_NO_CURRENT_POSITION,
+  ERR_NOT_ADMIN,
+  ERR_NOT_REGISTERED,
+  ERR_UNKNOWN_PENDING_WITHDRAWAL,
+  ERR_ZERO_FEE,
+  FEE_PER_SWEEP,
+  SIGNER_MANAGER,
+  acceptWithdrawal,
+  deployer,
+  fundAndClaimSignerRewards,
+  getDueSettlements,
+  getDueSweeps,
+  initPox5,
+  performSweep,
+  registerForSweep,
+  registerSignerManager,
+  rejectWithdrawal,
+  sbtcBalance,
+  stakeFor,
+  stakeWithPoxAddr,
+  stxBalance,
+  wallet1,
+  wallet2,
+  wallet3,
+} from "./pox-5-fixtures";
 
-// Smoke tests for the sweep-registry. They lean on the in-project mocks
-// (pox-5, sbtc-registry, mock-signer-manager) to drive the registry's paths
-// without a real signer-manager / pox-5. Deeper behavioral coverage
-// (pagination, multi-staker batches, empty-cycle advance) is left for later.
-
-const accounts = simnet.getAccounts();
-const deployer = accounts.get("deployer")!;
-const wallet1 = accounts.get("wallet_1")!;
-const wallet2 = accounts.get("wallet_2")!;
-
-// The signer-manager the registry keys against is the mock contract.
-const signerManager = `${deployer}.mock-signer-manager`;
-
-const FEE_PER_SWEEP = 100000n; // contract default
-
-// error codes (see sweep-registry.clar)
-const ERR_ALREADY_REGISTERED = 601n;
-const ERR_INSUFFICIENT_FEE = 602n;
-const ERR_NOT_ADMIN = 603n;
-const ERR_NO_CURRENT_POSITION = 605n;
-const ERR_ZERO_FEE = 606n;
-
-// Give `staker` an STX-only pox-5 position under the mock signer-manager,
-// starting at reward cycle `firstRewardCycle`, and set the current cycles.
-function seedStxPosition(
-  staker: string,
-  firstRewardCycle: number,
-  rewardCycle: number,
-  distCycle: number,
-) {
-  simnet.callPublicFn("pox-5", "set-reward-cycle", [Cl.uint(rewardCycle)], deployer);
-  simnet.callPublicFn("pox-5", "set-distribution-cycle", [Cl.uint(distCycle)], deployer);
-  simnet.callPublicFn(
-    "pox-5",
-    "set-staker-info",
-    [Cl.principal(staker), Cl.principal(signerManager), Cl.uint(firstRewardCycle)],
-    deployer,
-  );
-}
-
-function register(staker: string, fee: bigint, sender: string) {
+function settlePendingWithdrawal(staker: string, requestId: bigint, sender: string) {
   return simnet.callPublicFn(
     "sweep-registry",
-    "register-for-sweep",
-    [Cl.principal(staker), Cl.principal(signerManager), Cl.none(), Cl.uint(fee)],
+    "settle-pending-withdrawal",
+    [Cl.principal(staker), Cl.principal(SIGNER_MANAGER), Cl.uint(requestId)],
     sender,
   );
 }
 
-function stxBalance(who: string): bigint {
-  return simnet.getAssetsMap().get("STX")!.get(who)!;
+// Integration tests for sweep-registry against the REAL pox-5, signer-manager,
+// and sBTC contracts. A staker must have a genuine pox-5 position under the
+// signer-manager to be registerable, so registrations here are all real.
+
+function registered(staker: string) {
+  return Cl.tuple({
+    "signer-manager": Cl.principal(SIGNER_MANAGER),
+    staker: Cl.principal(staker),
+    "bond-index": Cl.none(),
+    "reward-cycle": Cl.uint(1),
+  });
 }
 
-describe("set-fee-per-sweep", () => {
-  it("lets the admin (deployer) change the fee", () => {
-    const { result } = simnet.callPublicFn(
+describe("get-page-size", () => {
+  it("returns the pagination cap", () => {
+    const { result } = simnet.callReadOnlyFn(
       "sweep-registry",
-      "set-fee-per-sweep",
-      [Cl.uint(250000)],
+      "get-page-size",
+      [],
       deployer,
     );
-    expect(result).toBeOk(Cl.bool(true));
+    expect(result).toBeUint(100);
+  });
+});
+
+describe("admin", () => {
+  it("deployer starts as admin", () => {
+    expect(
+      simnet.callReadOnlyFn("sweep-registry", "is-admin", [Cl.principal(deployer)], deployer)
+        .result,
+    ).toBeBool(true);
   });
 
-  it("rejects a non-admin", () => {
-    const { result } = simnet.callPublicFn(
+  it("admin can grant and revoke other admins", () => {
+    expect(
+      simnet.callPublicFn(
+        "sweep-registry",
+        "update-admin",
+        [Cl.principal(wallet1), Cl.bool(true)],
+        deployer,
+      ).result,
+    ).toBeOk(Cl.principal(wallet1));
+    expect(
+      simnet.callReadOnlyFn("sweep-registry", "is-admin", [Cl.principal(wallet1)], deployer)
+        .result,
+    ).toBeBool(true);
+
+    // the new admin can revoke
+    simnet.callPublicFn(
       "sweep-registry",
-      "set-fee-per-sweep",
-      [Cl.uint(250000)],
+      "update-admin",
+      [Cl.principal(wallet1), Cl.bool(false)],
       wallet1,
     );
-    expect(result).toBeErr(Cl.uint(ERR_NOT_ADMIN));
+    expect(
+      simnet.callReadOnlyFn("sweep-registry", "is-admin", [Cl.principal(wallet1)], deployer)
+        .result,
+    ).toBeBool(false);
   });
 
-  it("rejects a zero fee", () => {
-    const { result } = simnet.callPublicFn(
+  it("non-admin cannot update admins", () => {
+    expect(
+      simnet.callPublicFn(
+        "sweep-registry",
+        "update-admin",
+        [Cl.principal(wallet2), Cl.bool(true)],
+        wallet1,
+      ).result,
+    ).toBeErr(Cl.uint(ERR_NOT_ADMIN));
+  });
+
+  // Documents the self-lockout footgun: the sole admin can remove itself,
+  // permanently bricking set-fee-per-sweep and update-admin. If a last-admin
+  // guard is added, flip this expectation.
+  it("the sole admin CAN lock itself out (no last-admin guard)", () => {
+    simnet.callPublicFn(
       "sweep-registry",
-      "set-fee-per-sweep",
-      [Cl.uint(0)],
+      "update-admin",
+      [Cl.principal(deployer), Cl.bool(false)],
       deployer,
     );
-    expect(result).toBeErr(Cl.uint(ERR_ZERO_FEE));
+    expect(
+      simnet.callPublicFn("sweep-registry", "set-fee-per-sweep", [Cl.uint(1)], deployer).result,
+    ).toBeErr(Cl.uint(ERR_NOT_ADMIN));
+  });
+});
+
+describe("set-fee-per-sweep", () => {
+  it("admin can change the fee", () => {
+    expect(
+      simnet.callPublicFn("sweep-registry", "set-fee-per-sweep", [Cl.uint(250000)], deployer)
+        .result,
+    ).toBeOk(Cl.bool(true));
+  });
+  it("rejects a non-admin", () => {
+    expect(
+      simnet.callPublicFn("sweep-registry", "set-fee-per-sweep", [Cl.uint(250000)], wallet1)
+        .result,
+    ).toBeErr(Cl.uint(ERR_NOT_ADMIN));
+  });
+  it("rejects a zero fee", () => {
+    expect(
+      simnet.callPublicFn("sweep-registry", "set-fee-per-sweep", [Cl.uint(0)], deployer).result,
+    ).toBeErr(Cl.uint(ERR_ZERO_FEE));
   });
 });
 
 describe("register-for-sweep", () => {
   beforeEach(() => {
-    seedStxPosition(wallet1, 5, 5, 10);
+    initPox5();
+    registerSignerManager();
+    stakeFor(wallet1);
   });
 
-  it("registers a staking position and returns the sweeps bought", () => {
-    // 3 * fee-per-sweep buys exactly 3 sweeps
-    const { result } = register(wallet1, 3n * FEE_PER_SWEEP, wallet1);
+  it("registers a real staking position and returns sweeps bought", () => {
+    const { result } = registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
     expect(result).toBeOk(Cl.uint(3));
   });
 
   it("burns exactly the used portion of the fee", () => {
     const before = stxBalance(wallet1);
-    // 3.5 sweeps' worth: only 3 whole sweeps are bought and burned
-    register(wallet1, 3n * FEE_PER_SWEEP + FEE_PER_SWEEP / 2n, wallet1);
-    const after = stxBalance(wallet1);
-    expect(before - after).toBe(3n * FEE_PER_SWEEP);
+    // 3.5 sweeps' worth -> only 3 whole sweeps bought and burned
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP + FEE_PER_SWEEP / 2n);
+    expect(before - stxBalance(wallet1)).toBe(3n * FEE_PER_SWEEP);
+  });
+
+  it("caps sweeps bought at MAX_SWEEP_DISTRIBUTION_CYCLES (192)", () => {
+    // pay for 500 sweeps; only 192 are bought/burned
+    const before = stxBalance(wallet1);
+    const { result } = registerForSweep(wallet1, 500n * FEE_PER_SWEEP);
+    expect(result).toBeOk(Cl.uint(192));
+    expect(before - stxBalance(wallet1)).toBe(192n * FEE_PER_SWEEP);
   });
 
   it("rejects a fee too small to buy a single sweep", () => {
-    const { result } = register(wallet1, FEE_PER_SWEEP - 1n, wallet1);
-    expect(result).toBeErr(Cl.uint(ERR_INSUFFICIENT_FEE));
+    expect(registerForSweep(wallet1, FEE_PER_SWEEP - 1n).result).toBeErr(
+      Cl.uint(ERR_INSUFFICIENT_FEE),
+    );
   });
 
-  it("rejects a staker with no current pox-5 position", () => {
-    // wallet2 has no staker-info seeded
-    const { result } = register(wallet2, FEE_PER_SWEEP, wallet1);
-    expect(result).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
+  it("rejects a staker with no pox-5 position", () => {
+    // wallet3 never staked
+    expect(registerForSweep(wallet3, FEE_PER_SWEEP).result).toBeErr(
+      Cl.uint(ERR_NO_CURRENT_POSITION),
+    );
   });
 
-  it("rejects a duplicate registration for the same staker + signer-manager", () => {
-    register(wallet1, FEE_PER_SWEEP, wallet1);
-    const { result } = register(wallet1, FEE_PER_SWEEP, wallet1);
-    expect(result).toBeErr(Cl.uint(ERR_ALREADY_REGISTERED));
+  it("rejects a duplicate registration", () => {
+    registerForSweep(wallet1, FEE_PER_SWEEP);
+    expect(registerForSweep(wallet1, FEE_PER_SWEEP).result).toBeErr(
+      Cl.uint(ERR_ALREADY_REGISTERED),
+    );
+  });
+
+  it("is permissionless: a third party can register and pay for a staker", () => {
+    const before = stxBalance(wallet2);
+    const { result } = registerForSweep(wallet1, FEE_PER_SWEEP, wallet2);
+    expect(result).toBeOk(Cl.uint(1));
+    expect(before - stxBalance(wallet2)).toBe(FEE_PER_SWEEP); // payer is wallet2
   });
 });
 
 describe("get-due-sweeps", () => {
   beforeEach(() => {
-    seedStxPosition(wallet1, 5, 5, 10);
-  });
-
-  it("lists a fresh registration as due", () => {
-    register(wallet1, FEE_PER_SWEEP, wallet1);
-    const { result } = simnet.callReadOnlyFn(
-      "sweep-registry",
-      "get-due-sweeps",
-      [Cl.none()],
-      wallet1,
-    );
-    expect(result).toBeOk(
-      Cl.list([
-        Cl.tuple({
-          "signer-manager": Cl.principal(signerManager),
-          staker: Cl.principal(wallet1),
-          "bond-index": Cl.none(),
-          "reward-cycle": Cl.uint(5),
-        }),
-      ]),
-    );
+    initPox5();
+    registerSignerManager();
+    stakeFor(wallet1);
   });
 
   it("is empty when nothing is registered", () => {
-    const { result } = simnet.callReadOnlyFn(
-      "sweep-registry",
-      "get-due-sweeps",
-      [Cl.none()],
-      wallet1,
-    );
-    expect(result).toBeOk(Cl.list([]));
+    expect(getDueSweeps()).toBeOk(Cl.list([]));
+  });
+
+  it("lists a fresh registration as due", () => {
+    registerForSweep(wallet1, FEE_PER_SWEEP);
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+  });
+
+  it("walks multiple registrations", () => {
+    stakeFor(wallet2);
+    registerForSweep(wallet1, FEE_PER_SWEEP);
+    registerForSweep(wallet2, FEE_PER_SWEEP);
+    const { value: rows } = getDueSweeps() as unknown as { value: { value: unknown[] } };
+    expect(rows.value.length).toBe(2);
   });
 });
 
-describe("perform-sweep", () => {
+describe("perform-sweep (direct sBTC payout)", () => {
   beforeEach(() => {
-    seedStxPosition(wallet1, 5, 5, 10);
-    register(wallet1, 3n * FEE_PER_SWEEP, wallet1);
+    initPox5();
+    registerSignerManager();
+    stakeFor(wallet1);
   });
 
-  it("sweeps a direct sBTC payout (no withdrawal) and clears it from the due list", () => {
-    // mock signer-manager pays directly: ok, no withdrawal request-id
-    simnet.callPublicFn(
-      "mock-signer-manager",
-      "set-claim-result",
-      [Cl.bool(false), Cl.uint(0), Cl.uint(1000), Cl.none()],
-      deployer,
-    );
+  it("sweeps a claimable staker, pays sBTC, and clears it from the due list", () => {
+    fundAndClaimSignerRewards(2000n);
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
 
-    const { result } = simnet.callPublicFn(
-      "sweep-registry",
-      "perform-sweep",
-      [Cl.principal(wallet1), Cl.principal(signerManager)],
-      wallet2, // permissionless: anyone can trigger
-    );
+    const before = sbtcBalance(wallet1);
+    const { result } = performSweep(wallet1, wallet2); // permissionless caller
+    // no pox-addr -> direct payout -> no withdrawal request
     expect(result).toBeOk(Cl.none());
+    expect(sbtcBalance(wallet1)).toBeGreaterThan(before);
 
-    // already swept this distribution cycle -> no longer due
-    const { result: due } = simnet.callReadOnlyFn(
-      "sweep-registry",
-      "get-due-sweeps",
-      [Cl.none()],
-      wallet1,
-    );
-    expect(due).toBeOk(Cl.list([]));
+    // swept this distribution cycle -> no longer due
+    expect(getDueSweeps()).toBeOk(Cl.list([]));
   });
 
-  it("records an L1 withdrawal request-id for later settlement", () => {
-    // mock signer-manager routes to L1: ok with withdrawal request-id 7
-    simnet.callPublicFn(
-      "mock-signer-manager",
-      "set-claim-result",
-      [Cl.bool(false), Cl.uint(0), Cl.uint(1000), Cl.some(Cl.uint(7))],
-      deployer,
-    );
+  it("advances past a genuinely empty cycle without stalling", () => {
+    // registered, but no rewards were ever funded/claimed:
+    // claim errs u1001 AND get-earned == 0 -> advance, returns (ok none)
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+    const { result } = performSweep(wallet1);
+    expect(result).toBeOk(Cl.none());
+    // consumed a sweep for this cycle -> not due again this cycle
+    expect(getDueSweeps()).toBeOk(Cl.list([]));
+  });
 
-    const { result } = simnet.callPublicFn(
-      "sweep-registry",
-      "perform-sweep",
-      [Cl.principal(wallet1), Cl.principal(signerManager)],
-      wallet2,
-    );
-    expect(result).toBeOk(Cl.some(Cl.uint(7)));
+  it("errors for a staker with no registration", () => {
+    expect(performSweep(wallet1).result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
+  });
 
-    const { result: settlements } = simnet.callReadOnlyFn(
-      "sweep-registry",
-      "get-due-settlements",
-      [Cl.none()],
-      wallet1,
-    );
-    expect(settlements).toBeOk(
-      Cl.list([
-        Cl.tuple({
-          staker: Cl.principal(wallet1),
-          "signer-manager": Cl.principal(signerManager),
-          "request-ids": Cl.list([Cl.uint(7)]),
-        }),
-      ]),
-    );
+  it("errors when already swept this distribution cycle", () => {
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+    performSweep(wallet1); // empty-cycle advance, marks swept
+    expect(performSweep(wallet1).result).toBeErr(Cl.uint(ERR_ALREADY_SWEPT));
   });
 });
 
-describe("settle-pending-withdrawal", () => {
+describe("perform-sweeps (batch)", () => {
   beforeEach(() => {
-    seedStxPosition(wallet1, 5, 5, 10);
-    register(wallet1, 3n * FEE_PER_SWEEP, wallet1);
-    // sweep once, producing pending withdrawal request-id 7
-    simnet.callPublicFn(
-      "mock-signer-manager",
-      "set-claim-result",
-      [Cl.bool(false), Cl.uint(0), Cl.uint(1000), Cl.some(Cl.uint(7))],
-      deployer,
-    );
-    simnet.callPublicFn(
-      "sweep-registry",
-      "perform-sweep",
-      [Cl.principal(wallet1), Cl.principal(signerManager)],
-      wallet2,
-    );
+    initPox5();
+    registerSignerManager();
+    stakeFor(wallet1);
+    stakeFor(wallet2);
   });
 
-  it("resolves an accepted withdrawal and drops it from the settlement list", () => {
-    // mark request 7 accepted in the sbtc-registry mock
-    simnet.callPublicFn(
-      "sbtc-registry",
-      "set-withdrawal-request",
-      [Cl.uint(7), Cl.some(Cl.bool(true))],
-      deployer,
-    );
-
+  it("sweeps multiple stakers and returns the count", () => {
+    fundAndClaimSignerRewards(2000n);
+    registerForSweep(wallet1, FEE_PER_SWEEP);
+    registerForSweep(wallet2, FEE_PER_SWEEP);
     const { result } = simnet.callPublicFn(
       "sweep-registry",
-      "settle-pending-withdrawal",
-      [Cl.principal(wallet1), Cl.principal(signerManager), Cl.uint(7)],
-      wallet2,
+      "perform-sweeps",
+      [Cl.principal(SIGNER_MANAGER), Cl.list([Cl.principal(wallet1), Cl.principal(wallet2)])],
+      wallet3,
     );
-    expect(result).toBeOk(Cl.bool(true));
+    expect(result).toBeOk(Cl.uint(2));
+  });
 
-    const { result: settlements } = simnet.callReadOnlyFn(
+  it("skips unregistered stakers without aborting the batch", () => {
+    registerForSweep(wallet1, FEE_PER_SWEEP);
+    const { result } = simnet.callPublicFn(
       "sweep-registry",
-      "get-due-settlements",
-      [Cl.none()],
+      "perform-sweeps",
+      // wallet2 is staked but NOT registered -> skipped
+      [Cl.principal(SIGNER_MANAGER), Cl.list([Cl.principal(wallet1), Cl.principal(wallet2)])],
+      wallet3,
+    );
+    expect(result).toBeOk(Cl.uint(1));
+  });
+});
+
+describe("update-registration", () => {
+  it("carries sweeps to a new signer-manager the caller now stakes under", () => {
+    // Only one real signer-manager is deployed, so we can at least prove the
+    // old registration is required and the carry path validates the new signer.
+    initPox5();
+    registerSignerManager();
+    stakeFor(wallet1);
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+    // moving to a signer-manager the staker has no position under fails on the
+    // create side (ERR_NO_CURRENT_POSITION), after destroying nothing (atomic).
+    const { result } = simnet.callPublicFn(
+      "sweep-registry",
+      "update-registration",
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(wallet2), Cl.none()],
       wallet1,
     );
-    expect(settlements).toBeOk(Cl.list([]));
+    expect(result).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
+    // original registration still intact
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+  });
+});
+
+describe("L1 withdrawal path + settlements", () => {
+  beforeEach(() => {
+    initPox5();
+    registerSignerManager();
+    stakeWithPoxAddr(wallet1); // pox-addr present -> rewards route to L1
+    fundAndClaimSignerRewards(2000n);
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+  });
+
+  it("records a withdrawal request-id and lists it as a due settlement", () => {
+    const { result } = performSweep(wallet1);
+    // pox-addr present -> the first L1 withdrawal request-id (1) is returned
+    expect(result).toBeOk(Cl.some(Cl.uint(1)));
+
+    const settlements = getDueSettlements() as unknown as {
+      value: { value: unknown[] };
+    };
+    expect(settlements.value.value.length).toBe(1);
+  });
+
+  it("settles an ACCEPTED withdrawal and clears it from the settlement list", () => {
+    performSweep(wallet1);
+    // sBTC signers accept request 1, then anyone settles it
+    acceptWithdrawal(1n);
+    const { result } = settlePendingWithdrawal(wallet1, 1n, wallet2);
+    expect(result).toBeOk(Cl.bool(true));
+    expect(getDueSettlements()).toBeOk(Cl.list([]));
+  });
+
+  it("settles a REJECTED withdrawal (reclaims to the staker) and clears it", () => {
+    performSweep(wallet1);
+    rejectWithdrawal(1n);
+    const { result } = settlePendingWithdrawal(wallet1, 1n, wallet2);
+    expect(result).toBeOk(Cl.bool(true));
+    expect(getDueSettlements()).toBeOk(Cl.list([]));
   });
 
   it("is a no-op while the withdrawal is still pending", () => {
-    // status left unset -> get-withdrawal-request returns none -> pending
-    simnet.callPublicFn(
-      "sbtc-registry",
-      "set-withdrawal-request",
-      [Cl.uint(7), Cl.none()],
-      deployer,
-    );
+    performSweep(wallet1);
+    // status not set -> still pending -> ok false, stays listed
+    expect(settlePendingWithdrawal(wallet1, 1n, wallet2).result).toBeOk(Cl.bool(false));
+    const settlements = getDueSettlements() as unknown as { value: { value: unknown[] } };
+    expect(settlements.value.value.length).toBe(1);
+  });
 
+  it("errors on an unknown pending withdrawal", () => {
+    performSweep(wallet1);
+    expect(settlePendingWithdrawal(wallet1, 9999n, wallet2).result).toBeErr(
+      Cl.uint(ERR_UNKNOWN_PENDING_WITHDRAWAL),
+    );
+  });
+
+  it("batch settle-pending-withdrawals resolves accepted items and counts them", () => {
+    performSweep(wallet1);
+    acceptWithdrawal(1n);
     const { result } = simnet.callPublicFn(
       "sweep-registry",
-      "settle-pending-withdrawal",
-      [Cl.principal(wallet1), Cl.principal(signerManager), Cl.uint(7)],
+      "settle-pending-withdrawals",
+      [
+        Cl.principal(SIGNER_MANAGER),
+        Cl.list([
+          Cl.tuple({ staker: Cl.principal(wallet1), "request-id": Cl.uint(1) }),
+          // an unknown item is skipped, not fatal
+          Cl.tuple({ staker: Cl.principal(wallet1), "request-id": Cl.uint(9999) }),
+        ]),
+      ],
       wallet2,
     );
-    expect(result).toBeOk(Cl.bool(false));
-
-    // still listed as awaiting settlement
-    const { result: settlements } = simnet.callReadOnlyFn(
-      "sweep-registry",
-      "get-due-settlements",
-      [Cl.none()],
-      wallet1,
-    );
-    expect(settlements).toBeOk(
-      Cl.list([
-        Cl.tuple({
-          staker: Cl.principal(wallet1),
-          "signer-manager": Cl.principal(signerManager),
-          "request-ids": Cl.list([Cl.uint(7)]),
-        }),
-      ]),
-    );
+    expect(result).toBeOk(Cl.uint(1));
+    expect(getDueSettlements()).toBeOk(Cl.list([]));
   });
 });

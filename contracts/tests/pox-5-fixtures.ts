@@ -1,0 +1,430 @@
+import { createHash } from "node:crypto";
+import {
+  Cl,
+  compressPublicKey,
+  encodeStructuredDataBytes,
+  privateKeyToPublic,
+  serializeCV,
+  signWithKey,
+} from "@stacks/transactions";
+
+/**
+ * Fixtures for driving the REAL pox-5 / signer-manager / sBTC contracts in
+ * simnet, so the sweep-registry can be tested against them end to end.
+ *
+ * Deliberately dependency-free beyond @stacks/transactions and node:crypto:
+ * the secp256k1 work (key derivation, signing) and sha256 both come from those,
+ * so no @noble/* or @scure/* packages are needed.
+ */
+
+// clarinet-sdk applies STX locking only to the boot pox-5, and both
+// signer-manager.clar and sweep-registry.clar call that principal, so every
+// pox-5 interaction here must target it (not a deployer-published copy).
+export const POX5 = "ST000000000000000000002AMW42H.pox-5";
+
+const accounts = simnet.getAccounts();
+export const deployer = accounts.get("deployer")!;
+export const wallet1 = accounts.get("wallet_1")!;
+export const wallet2 = accounts.get("wallet_2")!;
+export const wallet3 = accounts.get("wallet_3")!;
+export const wallet4 = accounts.get("wallet_4")!;
+
+export const SIGNER_MANAGER = `${deployer}.signer-manager`;
+export const SWEEP_REGISTRY = `${deployer}.sweep-registry`;
+export const SBTC_TOKEN =
+  "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
+export const SBTC_REGISTRY =
+  "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry";
+
+// With override_boot_contracts_source, pox-5 boots with this placeholder
+// mainnet principal holding both admin roles.
+const POX5_BOOTSTRAP_ADMIN = "SP72DMR3MJKS7RVBY33JVV7EEJSQ1PYDVKDP10FX";
+
+// pox-5 constants (contracts/pox-5.clar)
+export const REWARD_CYCLE_LENGTH = 100n;
+export const PREPARE_CYCLE_LENGTH = 10n;
+/** calculate-rewards runs once per distribution cycle = half a reward cycle. */
+export const HALF_CYCLE_LENGTH = REWARD_CYCLE_LENGTH / 2n;
+export const SIGNER_SET_MIN_USTX = 50_000_000_000n; // 50k STX
+export const RESERVE_RATIO = 1500n; // basis points
+export const BASIS_POINTS = 10_000n;
+/** pox-5's SIP-018 signing domain. */
+const POX5_SIGNER_DOMAIN = { name: "pox-5-signer", version: "1.0.0" };
+/** simnet runs with the testnet chain-id. */
+const CHAIN_ID = 2147483648;
+
+// sweep-registry error codes
+export const ERR_NOT_REGISTERED = 600n;
+export const ERR_ALREADY_REGISTERED = 601n;
+export const ERR_INSUFFICIENT_FEE = 602n;
+export const ERR_NOT_ADMIN = 603n;
+export const ERR_NO_CURRENT_POSITION = 605n;
+export const ERR_ZERO_FEE = 606n;
+export const ERR_ALREADY_SWEPT = 608n;
+export const ERR_TOO_MANY_PENDING = 609n;
+export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 610n;
+
+/** sweep-registry's default fee-per-sweep. */
+export const FEE_PER_SWEEP = 100_000n;
+
+// ---------------------------------------------------------------------------
+// low-level helpers
+// ---------------------------------------------------------------------------
+
+function toBytes(key: string | Uint8Array): Uint8Array {
+  return typeof key === "string" ? Uint8Array.from(Buffer.from(key, "hex")) : key;
+}
+
+function sha256(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+export function stxToUStx(stx: number): bigint {
+  return BigInt(stx) * 1_000_000n;
+}
+
+/** Rewards left after pox-5 skims its reserve cut. */
+export function stxRewards(rewards: bigint): bigint {
+  return rewards - (rewards * RESERVE_RATIO) / BASIS_POINTS;
+}
+
+export function burnHeight(): bigint {
+  return BigInt(simnet.burnBlockHeight);
+}
+
+/** Mine burn blocks until `target` is reached (no-op if already past it). */
+export function mineUntil(target: bigint) {
+  const current = burnHeight();
+  if (target > current) {
+    simnet.mineEmptyBurnBlocks(Number(target - current));
+  }
+}
+
+export function rewardCycleToBurnHeight(cycle: bigint): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "reward-cycle-to-burn-height",
+    [Cl.uint(cycle)],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
+}
+
+export function currentRewardCycle(): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "current-pox-reward-cycle",
+    [],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
+}
+
+export function currentDistributionCycle(): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "current-distribution-cycle",
+    [],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
+}
+
+export function sbtcBalance(who: string): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    SBTC_TOKEN,
+    "get-balance",
+    [Cl.principal(who)],
+    deployer,
+  );
+  // (ok uint)
+  const ok = (result as unknown as { value: { value: bigint } }).value;
+  return ok.value;
+}
+
+export function stxBalance(who: string): bigint {
+  return simnet.getAssetsMap().get("STX")!.get(who)!;
+}
+
+// ---------------------------------------------------------------------------
+// pox-5 setup
+// ---------------------------------------------------------------------------
+
+/**
+ * Initialize the boot pox-5: set short burnchain parameters so cycles are cheap
+ * to advance, and move both admin roles from the baked-in bootstrap principal to
+ * the deployer.
+ */
+export function initPox5() {
+  simnet.callPublicFn(
+    POX5,
+    "set-burnchain-parameters",
+    [
+      Cl.uint(0),
+      Cl.uint(PREPARE_CYCLE_LENGTH),
+      Cl.uint(REWARD_CYCLE_LENGTH),
+      Cl.uint(1),
+    ],
+    deployer,
+  );
+  simnet.callPublicFn(
+    POX5,
+    "set-bond-admin",
+    [Cl.principal(deployer)],
+    POX5_BOOTSTRAP_ADMIN,
+  );
+  simnet.callPublicFn(
+    POX5,
+    "set-pause-admin",
+    [Cl.principal(deployer)],
+    POX5_BOOTSTRAP_ADMIN,
+  );
+}
+
+let authIdCounter = 1000n;
+
+/**
+ * Sign a pox-5 signer-key grant for `signerManager` (SIP-018 structured data,
+ * converted from VRS to the RSV layout pox-5 expects).
+ */
+function signSignerKeyGrant(
+  signerManager: string,
+  authId: bigint,
+  privateKey: string,
+): Uint8Array {
+  const message = Cl.tuple({
+    "signer-manager": Cl.principal(signerManager),
+    topic: Cl.stringAscii("grant-authorization"),
+    "auth-id": Cl.uint(authId),
+  });
+  const domain = Cl.tuple({
+    name: Cl.stringAscii(POX5_SIGNER_DOMAIN.name),
+    version: Cl.stringAscii(POX5_SIGNER_DOMAIN.version),
+    "chain-id": Cl.uint(CHAIN_ID),
+  });
+  const fullMessage = encodeStructuredDataBytes({ message, domain });
+  const vrs = signWithKey(privateKey, sha256(fullMessage));
+  // signWithKey yields V||R||S; pox-5 verifies R||S||V.
+  return toBytes(vrs.slice(2) + vrs.slice(0, 2));
+}
+
+/**
+ * Grant a signer key to the real signer-manager and register it with pox-5.
+ * `register-self` performs both steps and is admin-only, so it runs as deployer
+ * (the signer-manager's default admin).
+ */
+export function registerSignerManager(privateKey = "a".repeat(63) + "1") {
+  const authId = authIdCounter++;
+  const signerKey = toBytes(compressPublicKey(privateKeyToPublic(privateKey)));
+  const signerSig = signSignerKeyGrant(SIGNER_MANAGER, authId, privateKey);
+  return simnet.callPublicFn(
+    "signer-manager",
+    "register-self",
+    [
+      Cl.principal(SIGNER_MANAGER),
+      Cl.buffer(signerKey),
+      Cl.uint(authId),
+      Cl.buffer(signerSig),
+    ],
+    deployer,
+  );
+}
+
+/** A valid pox-addr (p2pkh, version 0x00, 20-byte hash) for the L1 path. */
+export const POX_ADDR = {
+  version: Uint8Array.from([0x00]),
+  hashbytes: new Uint8Array(20).fill(0x11),
+};
+
+/**
+ * Encode pox-addr calldata the way signer-manager's validate-stake! expects:
+ * a consensus-serialized `{ pox-addr: { version, hashbytes }, max-fee }`.
+ */
+export function poxAddrCalldata(maxFee = 100n) {
+  const cv = Cl.tuple({
+    "pox-addr": Cl.tuple({
+      version: Cl.buffer(POX_ADDR.version),
+      hashbytes: Cl.buffer(POX_ADDR.hashbytes),
+    }),
+    "max-fee": Cl.uint(maxFee),
+  });
+  return Cl.some(Cl.buffer(toBytes(serializeCV(cv))));
+}
+
+/** Stake `amount` uSTX under the real signer-manager WITH an L1 pox-addr. */
+export function stakeWithPoxAddr(
+  staker: string,
+  amount = SIGNER_SET_MIN_USTX,
+  numCycles = 2n,
+  maxFee = 100n,
+) {
+  return simnet.callPublicFn(
+    POX5,
+    "stake",
+    [
+      Cl.principal(SIGNER_MANAGER),
+      Cl.uint(amount),
+      Cl.uint(numCycles),
+      Cl.uint(burnHeight()),
+      poxAddrCalldata(maxFee),
+    ],
+    staker,
+  );
+}
+
+/** Stake `amount` uSTX under the real signer-manager, as `staker`. */
+export function stakeFor(
+  staker: string,
+  amount = SIGNER_SET_MIN_USTX,
+  numCycles = 2n,
+) {
+  return simnet.callPublicFn(
+    POX5,
+    "stake",
+    [
+      Cl.principal(SIGNER_MANAGER),
+      Cl.uint(amount),
+      Cl.uint(numCycles),
+      Cl.uint(burnHeight()),
+      Cl.none(),
+    ],
+    staker,
+  );
+}
+
+/**
+ * Move rewards into the signer-manager for `rewardCycle`: fund pox-5 with sBTC,
+ * advance to that cycle's distribution boundary, run pox-5 calculate-rewards,
+ * then signer-manager claim-rewards (which is what makes rewards visible to
+ * stakers, and what perform-sweep requires to have happened).
+ */
+export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle = 1n) {
+  simnet.callPublicFn(
+    SBTC_TOKEN,
+    "transfer",
+    [Cl.uint(rewards), Cl.principal(deployer), Cl.principal(POX5), Cl.none()],
+    deployer,
+  );
+  mineUntil(rewardCycleToBurnHeight(rewardCycle) + HALF_CYCLE_LENGTH);
+  simnet.callPublicFn(POX5, "calculate-rewards", [Cl.list([])], deployer);
+  return simnet.callPublicFn(
+    "signer-manager",
+    "claim-rewards",
+    [Cl.list([]), Cl.uint(rewardCycle)],
+    deployer,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// sweep-registry helpers
+// ---------------------------------------------------------------------------
+
+export function registerForSweep(
+  staker: string,
+  fee: bigint,
+  sender = staker,
+  signerManager = SIGNER_MANAGER,
+  bondIndex = Cl.none(),
+) {
+  return simnet.callPublicFn(
+    "sweep-registry",
+    "register-for-sweep",
+    [Cl.principal(staker), Cl.principal(signerManager), bondIndex, Cl.uint(fee)],
+    sender,
+  );
+}
+
+export function performSweep(
+  staker: string,
+  sender = staker,
+  signerManager = SIGNER_MANAGER,
+) {
+  return simnet.callPublicFn(
+    "sweep-registry",
+    "perform-sweep",
+    [Cl.principal(staker), Cl.principal(signerManager)],
+    sender,
+  );
+}
+
+export function getDueSweeps(cursor = Cl.none()) {
+  return simnet.callReadOnlyFn(
+    "sweep-registry",
+    "get-due-sweeps",
+    [cursor],
+    deployer,
+  ).result;
+}
+
+export function getDueSettlements(cursor = Cl.none()) {
+  return simnet.callReadOnlyFn(
+    "sweep-registry",
+    "get-due-settlements",
+    [cursor],
+    deployer,
+  ).result;
+}
+
+// The sBTC registry's current-signer-principal (allowed to accept/reject
+// withdrawals) defaults to the sBTC deployer.
+export const SBTC_SIGNER = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4";
+const SBTC_WITHDRAWAL =
+  "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal";
+
+/** The burn header hash at `height` (accept-withdrawal-request's fork check). */
+function burnHeader(height: bigint): Uint8Array {
+  const r = simnet.execute(`(get-burn-block-info? header-hash u${height})`);
+  const hex = (r.result as unknown as { value: { value: string } }).value.value;
+  return Uint8Array.from(Buffer.from(hex, "hex"));
+}
+
+/** sBTC signers REJECT withdrawal `requestId` -> status becomes (some false). */
+export function rejectWithdrawal(requestId: bigint) {
+  return simnet.callPublicFn(
+    SBTC_WITHDRAWAL,
+    "reject-withdrawal-request",
+    [Cl.uint(requestId), Cl.uint(0)],
+    SBTC_SIGNER,
+  );
+}
+
+/** sBTC signers ACCEPT withdrawal `requestId` -> status becomes (some true). */
+export function acceptWithdrawal(requestId: bigint, fee = 30n) {
+  const height = BigInt(simnet.burnBlockHeight - 1);
+  return simnet.callPublicFn(
+    SBTC_WITHDRAWAL,
+    "accept-withdrawal-request",
+    [
+      Cl.uint(requestId),
+      Cl.buffer(new Uint8Array(32)),
+      Cl.uint(0),
+      Cl.uint(0),
+      Cl.uint(fee),
+      Cl.buffer(burnHeader(height)),
+      Cl.uint(height),
+      Cl.buffer(new Uint8Array(32)),
+    ],
+    SBTC_SIGNER,
+  );
+}
+
+export function keyTuple(staker: string, signerManager = SIGNER_MANAGER) {
+  return Cl.tuple({
+    staker: Cl.principal(staker),
+    "signer-manager": Cl.principal(signerManager),
+  });
+}
+
+/**
+ * Full happy-path setup: init pox-5, register the signer-manager, stake
+ * `stakers`, then pull `rewards` sBTC through to the signer-manager so each
+ * staker has something claimable for reward cycle 1.
+ */
+export function setupClaimableStakers(stakers: string[], rewards = 2000n) {
+  initPox5();
+  registerSignerManager();
+  for (const staker of stakers) {
+    stakeFor(staker);
+  }
+  fundAndClaimSignerRewards(rewards);
+}
