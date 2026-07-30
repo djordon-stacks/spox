@@ -458,12 +458,96 @@ describe("process-reward-claims (batch)", () => {
 });
 
 describe("update-registration", () => {
-  it("carries sweeps to a new signer-manager the caller now stakes under", () => {
-    // Only one real signer-manager is deployed, so we can at least prove the
-    // old registration is required and the carry path validates the new signer.
+  // Only one real signer-manager is deployed, so the carry happy path is
+  // exercised by moving the {staker, signer-manager} registration onto the same
+  // position: destroy + recreate, carrying the sweeps it had left. That is
+  // enough to prove the carry mechanics (no fee, count preserved, state reset)
+  // without a second signer to move between.
+  beforeEach(() => {
     initPox5();
     registerSignerManager();
     stakeFor(wallet1);
+  });
+
+  it("carries all remaining sweeps to the recreated registration, burning nothing", () => {
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+
+    const before = stxBalance(wallet1);
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "update-registration",
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      wallet1,
+    );
+    expect(result).toBeOk(Cl.uint(3)); // all 3 sweeps carried over
+
+    // the carry reuses already-bought sweeps, so nothing is burned
+    expect(stxBalance(wallet1)).toBe(before);
+
+    // the registration is back with the same 3 sweeps and fresh state
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-cycles": Cl.uint(3),
+        "next-reward-cycle": Cl.uint(1),
+        "last-claim-dist-cycle": Cl.none(),
+      }),
+    );
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+  });
+
+  it("carries only the sweeps left after some were consumed", () => {
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    // consume one sweep (empty-cycle advance): 3 -> 2, marked swept this cycle
+    performSweep(wallet1);
+
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "update-registration",
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      wallet1,
+    );
+    expect(result).toBeOk(Cl.uint(2)); // only the 2 remaining sweeps carry over
+
+    // recreating clears last-claim-dist-cycle, so the staker is due again THIS
+    // distribution cycle -- re-registering re-opens the position.
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-cycles": Cl.uint(2),
+        "next-reward-cycle": Cl.uint(1),
+        "last-claim-dist-cycle": Cl.none(),
+      }),
+    );
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+  });
+
+  it("rejects when the caller has no registration to carry", () => {
+    // wallet1 is staked but never registered -> the destroy side errs
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "update-registration",
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      wallet1,
+    );
+    expect(result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
+  });
+
+  it("acts on the caller's own registration, not another staker's", () => {
+    registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
+    // wallet2 has no registration; its update fails even though wallet1 has one
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "update-registration",
+      [Cl.principal(SIGNER_MANAGER), Cl.principal(SIGNER_MANAGER), Cl.none()],
+      wallet2,
+    );
+    expect(result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
+    // wallet1's registration is untouched
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+  });
+
+  it("is atomic: a failed carry leaves the original registration intact", () => {
     registerForSweep(wallet1, 3n * FEE_PER_CLAIM);
     // moving to a signer-manager the staker has no position under fails on the
     // create side with error ERR_NO_CURRENT_POSITION.
@@ -475,6 +559,14 @@ describe("update-registration", () => {
     );
     expect(result).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
     // original registration still intact
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-cycles": Cl.uint(3),
+        "next-reward-cycle": Cl.uint(1),
+        "last-claim-dist-cycle": Cl.none(),
+      }),
+    );
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
   });
 });

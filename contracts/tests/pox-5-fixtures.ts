@@ -486,7 +486,7 @@ export function acceptWithdrawal(requestId: bigint, fee = 30n) {
 
 export function keyTuple(staker: string, signerManager = SIGNER_MANAGER) {
   return Cl.tuple({
-    staker: Cl.principal(staker),
+    "staker": Cl.principal(staker),
     "signer-manager": Cl.principal(signerManager),
   });
 }
