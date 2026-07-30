@@ -13,6 +13,7 @@ import {
   SIGNER_MANAGER,
   acceptWithdrawal,
   bondPeriodToRewardCycle,
+  currentDistributionCycle,
   deployer,
   fundAndClaimSignerRewards,
   getDueSettlements,
@@ -266,15 +267,32 @@ describe("perform-sweep (direct sBTC payout)", () => {
     stakeFor(wallet1);
   });
 
-  it("sweeps a claimable staker, pays sBTC, and clears it from the due list", () => {
+  it("pays the staker its earned sBTC and decrements the registration", () => {
     fundAndClaimSignerRewards(2000n);
     registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
 
-    const before = sbtcBalance(wallet1);
+    const stakerBefore = sbtcBalance(wallet1);
+    const managerBefore = sbtcBalance(SIGNER_MANAGER);
+    const distCycle = currentDistributionCycle();
     const { result } = performSweep(wallet1, wallet2); // permissionless caller
     // no pox-addr -> direct payout -> no withdrawal request
     expect(result).toBeOk(Cl.none());
-    expect(sbtcBalance(wallet1)).toBeGreaterThan(before);
+
+    // sBTC moved from the signer-manager to the staker (not the caller):
+    // the staker's gain equals the signer-manager's loss, and it is positive
+    const paid = sbtcBalance(wallet1) - stakerBefore;
+    expect(paid).toBeGreaterThan(0n);
+    expect(managerBefore - sbtcBalance(SIGNER_MANAGER)).toBe(paid);
+
+    // registration decremented: one sweep consumed, marked swept this cycle
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(2), // 3 -> 2
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.some(Cl.uint(distCycle)),
+      }),
+    );
 
     // swept this distribution cycle -> no longer due
     expect(getDueSweeps()).toBeOk(Cl.list([]));
@@ -284,8 +302,20 @@ describe("perform-sweep (direct sBTC payout)", () => {
     // registered, but no rewards were ever funded/claimed:
     // claim errs u1001 AND get-earned == 0 -> advance, returns (ok none)
     registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+    const distCycle = currentDistributionCycle();
     const { result } = performSweep(wallet1);
     expect(result).toBeOk(Cl.none());
+
+    // the empty-cycle path still consumes a sweep and marks it swept, without
+    // moving any sBTC
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(2), // 3 -> 2
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.some(Cl.uint(distCycle)),
+      }),
+    );
     // consumed a sweep for this cycle -> not due again this cycle
     expect(getDueSweeps()).toBeOk(Cl.list([]));
   });
