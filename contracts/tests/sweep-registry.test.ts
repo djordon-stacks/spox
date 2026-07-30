@@ -215,6 +215,7 @@ describe("register-for-sweep", () => {
       Cl.uint(ERR_NO_CURRENT_POSITION),
     );
 
+    // Now we stake and registration succeeds
     stakeFor(wallet3);
     const { result } = registerForSweep(wallet3, FEE_PER_SWEEP);
     expect(result).toBeOk(Cl.uint(1));
@@ -274,6 +275,43 @@ describe("get-due-sweeps", () => {
       Cl.list([registered(wallet1), registered(wallet2)]),
     );
   });
+
+  it("drops a registration from the due list once it is swept this cycle", () => {
+    stakeFor(wallet2);
+    registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+    registerForSweep(wallet2, 3n * FEE_PER_SWEEP);
+
+    // both are due to start
+    expect(getDueSweeps()).toBeOk(
+      Cl.list([registered(wallet1), registered(wallet2)]),
+    );
+
+    // sweep only wallet1 (empty-cycle advance: no rewards funded)
+    const distCycle = currentDistributionCycle();
+    expect(performSweep(wallet1).result).toBeOk(Cl.none());
+
+    // wallet1 was swept this distribution cycle, so only wallet2 stays due
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet2)]));
+
+    // wallet1's registration still exists (not deleted) -- just not due
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(2), // 3 -> 2
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.some(Cl.uint(distCycle)),
+      }),
+    );
+
+    expect(getRegistration(wallet2)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(3),
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.none(),
+      }),
+    );
+  });
 });
 
 describe("perform-sweep (direct sBTC payout)", () => {
@@ -287,6 +325,18 @@ describe("perform-sweep (direct sBTC payout)", () => {
     fundAndClaimSignerRewards(2000n);
     registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
 
+    // The registration exists and a sweep is now due
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(3),
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.none(),
+      }),
+    );
+    
     const stakerBefore = sbtcBalance(wallet1);
     const managerBefore = sbtcBalance(SIGNER_MANAGER);
     const distCycle = currentDistributionCycle();
@@ -294,7 +344,7 @@ describe("perform-sweep (direct sBTC payout)", () => {
     // no pox-addr -> direct payout -> no withdrawal request
     expect(result).toBeOk(Cl.none());
 
-    // sBTC moved from the signer-manager to the staker (not the caller):
+    // sBTC moved from the signer-manager to the stake:
     // the staker's gain equals the signer-manager's loss, and it is positive
     const paid = sbtcBalance(wallet1) - stakerBefore;
     expect(paid).toBeGreaterThan(0n);
@@ -310,7 +360,7 @@ describe("perform-sweep (direct sBTC payout)", () => {
       }),
     );
 
-    // swept this distribution cycle -> no longer due
+    // The staker was swept this distribution cycle so they are no longer due
     expect(getDueSweeps()).toBeOk(Cl.list([]));
   });
 
@@ -318,6 +368,16 @@ describe("perform-sweep (direct sBTC payout)", () => {
     // registered, but no rewards were ever funded/claimed:
     // claim errs u1001 AND get-earned == 0 -> advance, returns (ok none)
     registerForSweep(wallet1, 3n * FEE_PER_SWEEP);
+
+    expect(getRegistration(wallet1)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-sweeps": Cl.uint(3),
+        "next-reward-cycle": Cl.uint(1),
+        "last-swept-dist-cycle": Cl.none(),
+      }),
+    );
+
     const distCycle = currentDistributionCycle();
     const { result } = performSweep(wallet1);
     expect(result).toBeOk(Cl.none());
@@ -359,6 +419,12 @@ describe("perform-sweeps (batch)", () => {
     fundAndClaimSignerRewards(2000n);
     registerForSweep(wallet1, FEE_PER_SWEEP);
     registerForSweep(wallet2, FEE_PER_SWEEP);
+
+    // both are due to start
+    expect(getDueSweeps()).toBeOk(
+      Cl.list([registered(wallet1), registered(wallet2)]),
+    );
+
     const { result } = simnet.callPublicFn(
       "sweep-registry",
       "perform-sweeps",
@@ -366,10 +432,17 @@ describe("perform-sweeps (batch)", () => {
       wallet3,
     );
     expect(result).toBeOk(Cl.uint(2));
+
+    // both are swept this distribution cycle, so none are due again
+    expect(getDueSweeps()).toBeOk(Cl.list([]));
   });
 
   it("skips unregistered stakers without aborting the batch", () => {
     registerForSweep(wallet1, FEE_PER_SWEEP);
+
+    // wallet2 is skipped, so only wallet1 is due
+    expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+
     const { result } = simnet.callPublicFn(
       "sweep-registry",
       "perform-sweeps",
@@ -378,6 +451,9 @@ describe("perform-sweeps (batch)", () => {
       wallet3,
     );
     expect(result).toBeOk(Cl.uint(1));
+
+    // wallet2 is skipped, so only wallet1 is due
+    expect(getDueSweeps()).toBeOk(Cl.list([]));
   });
 });
 
