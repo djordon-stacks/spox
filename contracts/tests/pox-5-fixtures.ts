@@ -58,11 +58,11 @@ export const ERR_NOT_REGISTERED = 600n;
 export const ERR_ALREADY_REGISTERED = 601n;
 export const ERR_INSUFFICIENT_FEE = 602n;
 export const ERR_NOT_ADMIN = 603n;
-export const ERR_NO_CURRENT_POSITION = 605n;
-export const ERR_ZERO_FEE = 606n;
-export const ERR_ALREADY_SWEPT = 608n;
-export const ERR_TOO_MANY_PENDING = 609n;
-export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 610n;
+export const ERR_NO_CURRENT_POSITION = 604n;
+export const ERR_ZERO_FEE = 605n;
+export const ERR_ALREADY_SWEPT = 606n;
+export const ERR_TOO_MANY_PENDING = 607n;
+export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 608n;
 
 /** sweep-registry's default fee-per-sweep. */
 export const FEE_PER_SWEEP = 100_000n;
@@ -249,6 +249,83 @@ export function poxAddrCalldata(maxFee = 100n) {
     "max-fee": Cl.uint(maxFee),
   });
   return Cl.some(Cl.buffer(toBytes(serializeCV(cv))));
+}
+
+// --- protocol bonds (sBTC-collateralized path, no Bitcoin lockup proof) ---
+
+/** stx-value-ratio used by the bond fixtures: 1 uSTX = 100 sat. */
+export const BOND_STX_VALUE_RATIO = 10_000_000n;
+/** min-ustx-ratio used by the bond fixtures: 10%. */
+export const BOND_MIN_USTX_RATIO = 1_000n;
+
+/** pox-5's min uSTX required to bond `sats` at the fixture ratios. */
+export function minUstxForSats(sats: bigint): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "min-ustx-for-sats-amount",
+    [Cl.uint(sats), Cl.uint(BOND_STX_VALUE_RATIO), Cl.uint(BOND_MIN_USTX_RATIO)],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
+}
+
+export function bondPeriodToRewardCycle(bondIndex: bigint): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "bond-period-to-reward-cycle",
+    [Cl.uint(bondIndex)],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
+}
+
+/**
+ * Set up protocol bond `bondIndex` (bond-admin = deployer after initPox5) with
+ * an allowlist covering `stakers`. Cribbed from core-contract-tests'
+ * "setting up and starting a bond" scenario.
+ */
+export function setupBond(bondIndex: bigint, stakers: string[], maxSats = 100_000_000n) {
+  return simnet.callPublicFn(
+    POX5,
+    "setup-bond",
+    [
+      Cl.uint(bondIndex),
+      Cl.uint(300), // target-rate (bps)
+      Cl.uint(BOND_STX_VALUE_RATIO),
+      Cl.uint(BOND_MIN_USTX_RATIO),
+      Cl.buffer(new Uint8Array()), // early-unlock-bytes (unused on the sBTC path)
+      Cl.list(
+        stakers.map((s) =>
+          Cl.tuple({ staker: Cl.principal(s), "max-sats": Cl.uint(maxSats) }),
+        ),
+      ),
+    ],
+    deployer,
+  );
+}
+
+/**
+ * Register `staker` for `bondIndex` under the real signer-manager, collateralized
+ * with `sats` sBTC (btc-lockup = (err sats), the non-L1 path). Uses the minimum
+ * qualifying uSTX so the position is valid.
+ */
+export function registerForBond(
+  staker: string,
+  bondIndex: bigint,
+  sats = 5_000_000n,
+) {
+  return simnet.callPublicFn(
+    POX5,
+    "register-for-bond",
+    [
+      Cl.uint(bondIndex),
+      Cl.principal(SIGNER_MANAGER),
+      Cl.uint(minUstxForSats(sats)),
+      Cl.error(Cl.uint(sats)), // (err sats) -> sBTC-collateralized bond
+      Cl.none(),
+    ],
+    staker,
+  );
 }
 
 /** Stake `amount` uSTX under the real signer-manager WITH an L1 pox-addr. */

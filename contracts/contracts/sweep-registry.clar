@@ -9,13 +9,11 @@
 (define-constant ERR_ALREADY_REGISTERED (err u601))
 (define-constant ERR_INSUFFICIENT_FEE (err u602))
 (define-constant ERR_NOT_ADMIN (err u603))
-
-(define-constant ERR_NO_CURRENT_POSITION (err u605))
-(define-constant ERR_ZERO_FEE (err u606))
-
-(define-constant ERR_ALREADY_SWEPT (err u608))
-(define-constant ERR_TOO_MANY_PENDING (err u609))
-(define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u610))
+(define-constant ERR_NO_CURRENT_POSITION (err u604))
+(define-constant ERR_ZERO_FEE (err u605))
+(define-constant ERR_ALREADY_SWEPT (err u606))
+(define-constant ERR_TOO_MANY_PENDING (err u607))
+(define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u608))
 ;; signer-manager's ERR_NO_CLAIMABLE_REWARDS, matched (not propagated) in
 ;; perform-sweep-impl so a genuinely empty cycle advances instead of stalling.
 (define-constant SM_ERR_NO_CLAIMABLE_REWARDS u1001)

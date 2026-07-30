@@ -12,16 +12,19 @@ import {
   FEE_PER_SWEEP,
   SIGNER_MANAGER,
   acceptWithdrawal,
+  bondPeriodToRewardCycle,
   deployer,
   fundAndClaimSignerRewards,
   getDueSettlements,
   getDueSweeps,
   initPox5,
   performSweep,
+  registerForBond,
   registerForSweep,
   registerSignerManager,
   rejectWithdrawal,
   sbtcBalance,
+  setupBond,
   stakeFor,
   stakeWithPoxAddr,
   stxBalance,
@@ -321,6 +324,75 @@ describe("update-registration", () => {
     expect(result).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
     // original registration still intact
     expect(getDueSweeps()).toBeOk(Cl.list([registered(wallet1)]));
+  });
+});
+
+describe("bond path", () => {
+  const BOND_INDEX = 0n;
+
+  beforeEach(() => {
+    initPox5();
+    registerSignerManager();
+    setupBond(BOND_INDEX, [wallet1]);
+    registerForBond(wallet1, BOND_INDEX);
+  });
+
+  it("get-position resolves the bond membership under the signer-manager", () => {
+    const { result } = simnet.callReadOnlyFn(
+      "sweep-registry",
+      "get-position",
+      [Cl.principal(wallet1), Cl.some(Cl.uint(BOND_INDEX))],
+      deployer,
+    );
+    expect(result).toBeSome(
+      Cl.tuple({
+        signer: Cl.principal(SIGNER_MANAGER),
+        "first-reward-cycle": Cl.uint(bondPeriodToRewardCycle(BOND_INDEX)),
+      }),
+    );
+  });
+
+  it("registers a bond position and lists it as due with the bond-index", () => {
+    const { result } = registerForSweep(
+      wallet1,
+      3n * FEE_PER_SWEEP,
+      wallet1,
+      SIGNER_MANAGER,
+      Cl.some(Cl.uint(BOND_INDEX)),
+    );
+    expect(result).toBeOk(Cl.uint(3));
+
+    expect(getDueSweeps()).toBeOk(
+      Cl.list([
+        Cl.tuple({
+          "signer-manager": Cl.principal(SIGNER_MANAGER),
+          staker: Cl.principal(wallet1),
+          "bond-index": Cl.some(Cl.uint(BOND_INDEX)),
+          "reward-cycle": Cl.uint(bondPeriodToRewardCycle(BOND_INDEX)),
+        }),
+      ]),
+    );
+  });
+
+  it("perform-sweep drives the bond claim path (empty-cycle advance)", () => {
+    registerForSweep(
+      wallet1,
+      3n * FEE_PER_SWEEP,
+      wallet1,
+      SIGNER_MANAGER,
+      Cl.some(Cl.uint(BOND_INDEX)),
+    );
+    // no bond rewards funded: claim errs u1001 and get-earned(signer, cycle,
+    // (some 0)) == 0 -> advance past the cycle via the bond-index path
+    expect(performSweep(wallet1).result).toBeOk(Cl.none());
+    expect(getDueSweeps()).toBeOk(Cl.list([]));
+  });
+
+  it("a bond staker cannot also register the STX-stake position (none)", () => {
+    // wallet1 bonded but never STX-staked, so the none-bond position is absent
+    expect(registerForSweep(wallet1, FEE_PER_SWEEP).result).toBeErr(
+      Cl.uint(ERR_NO_CURRENT_POSITION),
+    );
   });
 });
 
