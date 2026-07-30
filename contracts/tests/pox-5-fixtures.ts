@@ -1,20 +1,20 @@
-import { createHash } from "node:crypto";
 import {
   Cl,
   compressPublicKey,
-  encodeStructuredDataBytes,
   privateKeyToPublic,
-  serializeCV,
-  signWithKey,
+  serializeCVBytes,
+  signStructuredData,
+  type OptionalCV,
+  type UIntCV,
 } from "@stacks/transactions";
 
 /**
  * Fixtures for driving the REAL pox-5 / signer-manager / sBTC contracts in
  * simnet, so the sweep-registry can be tested against them end to end.
  *
- * Deliberately dependency-free beyond @stacks/transactions and node:crypto:
- * the secp256k1 work (key derivation, signing) and sha256 both come from those,
- * so no @noble/* or @scure/* packages are needed.
+ * Dependency-free beyond @stacks/transactions: key derivation, the SIP-018
+ * signer-key signing (hash + secp256k1), and CV (de)serialization all come from
+ * it, so there is no need for @noble/* / @scure/* or Node's crypto/Buffer.
  */
 
 // clarinet-sdk applies STX locking only to the boot pox-5, and both
@@ -70,14 +70,6 @@ export const FEE_PER_SWEEP = 100_000n;
 // ---------------------------------------------------------------------------
 // low-level helpers
 // ---------------------------------------------------------------------------
-
-function toBytes(key: string | Uint8Array): Uint8Array {
-  return typeof key === "string" ? Uint8Array.from(Buffer.from(key, "hex")) : key;
-}
-
-function sha256(data: Uint8Array): string {
-  return createHash("sha256").update(data).digest("hex");
-}
 
 export function stxToUStx(stx: number): bigint {
   return BigInt(stx) * 1_000_000n;
@@ -191,7 +183,7 @@ function signSignerKeyGrant(
   signerManager: string,
   authId: bigint,
   privateKey: string,
-): Uint8Array {
+): string {
   const message = Cl.tuple({
     "signer-manager": Cl.principal(signerManager),
     topic: Cl.stringAscii("grant-authorization"),
@@ -202,10 +194,8 @@ function signSignerKeyGrant(
     version: Cl.stringAscii(POX5_SIGNER_DOMAIN.version),
     "chain-id": Cl.uint(CHAIN_ID),
   });
-  const fullMessage = encodeStructuredDataBytes({ message, domain });
-  const vrs = signWithKey(privateKey, sha256(fullMessage));
-  // signWithKey yields V||R||S; pox-5 verifies R||S||V.
-  return toBytes(vrs.slice(2) + vrs.slice(0, 2));
+  // encode -> sha256 -> secp256k1 sign in RSV order, exactly pox-5's format
+  return signStructuredData({ message, domain, privateKey });
 }
 
 /**
@@ -215,16 +205,16 @@ function signSignerKeyGrant(
  */
 export function registerSignerManager(privateKey = "a".repeat(63) + "1") {
   const authId = authIdCounter++;
-  const signerKey = toBytes(compressPublicKey(privateKeyToPublic(privateKey)));
+  const signerKey = compressPublicKey(privateKeyToPublic(privateKey));
   const signerSig = signSignerKeyGrant(SIGNER_MANAGER, authId, privateKey);
   return simnet.callPublicFn(
     "signer-manager",
     "register-self",
     [
       Cl.principal(SIGNER_MANAGER),
-      Cl.buffer(signerKey),
+      Cl.bufferFromHex(signerKey),
       Cl.uint(authId),
-      Cl.buffer(signerSig),
+      Cl.bufferFromHex(signerSig),
     ],
     deployer,
   );
@@ -248,7 +238,7 @@ export function poxAddrCalldata(maxFee = 100n) {
     }),
     "max-fee": Cl.uint(maxFee),
   });
-  return Cl.some(Cl.buffer(toBytes(serializeCV(cv))));
+  return Cl.some(Cl.buffer(serializeCVBytes(cv)));
 }
 
 // --- protocol bonds (sBTC-collateralized path, no Bitcoin lockup proof) ---
@@ -401,7 +391,7 @@ export function registerForSweep(
   fee: bigint,
   sender = staker,
   signerManager = SIGNER_MANAGER,
-  bondIndex = Cl.none(),
+  bondIndex: OptionalCV<UIntCV> = Cl.none(),
 ) {
   return simnet.callPublicFn(
     "sweep-registry",
@@ -458,10 +448,10 @@ const SBTC_WITHDRAWAL =
   "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal";
 
 /** The burn header hash at `height` (accept-withdrawal-request's fork check). */
-function burnHeader(height: bigint): Uint8Array {
+function burnHeaderHex(height: bigint): string {
   const r = simnet.execute(`(get-burn-block-info? header-hash u${height})`);
-  const hex = (r.result as unknown as { value: { value: string } }).value.value;
-  return Uint8Array.from(Buffer.from(hex, "hex"));
+  // (some (buff 32)) -> the 32-byte header hash as hex
+  return (r.result as unknown as { value: { value: string } }).value.value;
 }
 
 /** sBTC signers REJECT withdrawal `requestId` -> status becomes (some false). */
@@ -486,7 +476,7 @@ export function acceptWithdrawal(requestId: bigint, fee = 30n) {
       Cl.uint(0),
       Cl.uint(0),
       Cl.uint(fee),
-      Cl.buffer(burnHeader(height)),
+      Cl.bufferFromHex(burnHeaderHex(height)),
       Cl.uint(height),
       Cl.buffer(new Uint8Array(32)),
     ],
