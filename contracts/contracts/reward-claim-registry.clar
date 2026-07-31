@@ -23,9 +23,6 @@
 (define-constant ERR_TOO_MANY_PENDING (err u606))
 ;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
-;; signer-manager's ERR_NO_CLAIMABLE_REWARDS, matched (not propagated) in
-;; process-reward-claim-impl so a genuinely empty cycle advances instead of stalling.
-(define-constant SM_ERR_NO_CLAIMABLE_REWARDS u1001)
 
 ;; A (list 100 uint) whose only job is to bound the get-due-claims /
 ;; get-due-settlements folds to at most DUE_PAGE_SIZE (100) node visits per
@@ -604,13 +601,13 @@
 ;; `claim-rewards` itself before claiming for the staker -- the keeper never has
 ;; to. It is idempotent across a batch: the first staker under a given (signer,
 ;; cycle, scope) pulls the rewards, which drops get-earned to u0, so the rest skip
-;; it. Then branches on `claim-staker-rewards`:
-;;   * ok            -- the staker was paid; advance-registration and record any
-;;                     withdrawal-request for later settlement.
-;;   * ERR_NO_CLAIMABLE_REWARDS (u1001) -- after ensuring rewards were pulled,
-;;                     this staker earned nothing this cycle (genuinely empty, or a
-;;                     zero share); advance past it so it never stalls.
-;;   * any other err -- returned unchanged.
+;; it. Then, whatever `claim-staker-rewards` returns, the registration ALWAYS
+;; advances one distribution cycle:
+;;   * ok  -- the staker was paid; record any withdrawal-request for later
+;;            settlement and return it.
+;;   * err -- empty cycle, a zero share, or a claim failure; advance past it
+;;            anyway so a single staker's problem never stalls the registration or
+;;            a batch. The error code is surfaced in the print event.
 ;; The fee moved no STX (burned at registration); `claim-rewards` does move sBTC
 ;; from pox-5 into the signer-manager.
 ;; #[allow(unchecked_data)]
@@ -674,29 +671,30 @@
                     reward-cycle: reward-cycle,
                     bond-index: bond-index,
                     earned: (get earned claim-result),
+                    claim-error: none,
                     withdrawal-request: withdrawal-request,
                 })
                 (ok withdrawal-request)
             )
             err-code
-            ;; after ensuring rewards were pulled, u1001 means this staker earned
-            ;; nothing this cycle; advance past it. any other error is surfaced.
-            (if (is-eq err-code SM_ERR_NO_CLAIMABLE_REWARDS)
-                (begin
-                    (advance-registration key registration current-reward-cycle
-                        current-distribution-cycle
-                    )
-                    (print {
-                        topic: "process-reward-claim",
-                        staker: staker,
-                        signer-manager: (contract-of signer-manager),
-                        reward-cycle: reward-cycle,
-                        bond-index: bond-index,
-                        nothing-to-claim: true,
-                    })
-                    (ok none)
+            ;; not paid -- empty cycle, a zero share, or a claim failure. Advance
+            ;; past it regardless so a single staker's problem never stalls the
+            ;; registration or a batch; the error code rides in the event.
+            (begin
+                (advance-registration key registration current-reward-cycle
+                    current-distribution-cycle
                 )
-                (err err-code)
+                (print {
+                    topic: "process-reward-claim",
+                    staker: staker,
+                    signer-manager: (contract-of signer-manager),
+                    reward-cycle: reward-cycle,
+                    bond-index: bond-index,
+                    earned: u0,
+                    claim-error: (some err-code),
+                    withdrawal-request: none,
+                })
+                (ok none)
             )
         )
     )
