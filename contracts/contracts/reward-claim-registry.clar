@@ -17,8 +17,9 @@
 (define-constant ERR_ZERO_FEE (err u604))
 ;; The registration was already claimed this distribution cycle
 (define-constant ERR_ALREADY_CLAIMED (err u605))
-;; This should be unreachable: a registration buys at most 192 claims and each claim
-;; adds at most one pending withdrawal, so the 192-slot list can never overflow
+;; This is thrown when there are more than 192 pending withdrawals for a
+;; registrant. This should not be reachable during PoX-5, which should not
+;; be around for more than 96 reward cycles.
 (define-constant ERR_TOO_MANY_PENDING (err u606))
 ;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
@@ -285,7 +286,7 @@
 )
 
 ;; Returns true if this registration has a claim left and wasn't claimed in
-;; `current-dist-cycle`. The caller passes `current-dist-cycle` (read once) rather than
+;; `current-distribution-cycle`. The caller passes `current-distribution-cycle` (read once) rather than
 ;; having this re-read `current-distribution-cycle` per node during a walk.
 ;; Used by get-due-claims.
 (define-private (is-due
@@ -295,11 +296,11 @@
             bond-index: (optional uint),
             next-reward-cycle: uint,
         })
-        (current-dist-cycle uint)
+        (current-distribution-cycle uint)
     )
     (and
         (> (get remaining-cycles registration) u0)
-        (not (is-eq (get last-claim-dist-cycle registration) (some current-dist-cycle)))
+        (not (is-eq (get last-claim-dist-cycle registration) (some current-distribution-cycle)))
     )
 )
 
@@ -341,7 +342,7 @@
 ;; Fold step for get-due-claims. From the current `node` it reads that
 ;; registration, appends a row when it is due, and advances `node` to the
 ;; next linked-list entry. Once `node` is none (walked past the tail) it is a
-;; no-op for the remaining ticks. `current-dist-cycle` rides in the accumulator so
+;; no-op for the remaining ticks. `current-distribution-cycle` rides in the accumulator so
 ;; the due check never re-reads it. `tick` is unused: the tick list only
 ;; bounds the number of iterations.
 (define-private (due-claims-step
@@ -351,7 +352,7 @@
                 staker: principal,
                 signer-manager: principal,
             }),
-            current-dist-cycle: uint,
+            current-distribution-cycle: uint,
             rows: (list 100
                 {
                     signer-manager: principal,
@@ -370,7 +371,7 @@
             )))
             (match (map-get? registrations key)
                 registration
-                (if (is-due registration (get current-dist-cycle acc))
+                (if (is-due registration (get current-distribution-cycle acc))
                     (merge acc {
                         node: next-node,
                         rows: (default-to (get rows acc)
@@ -427,7 +428,7 @@
         (ok (get rows
             (fold due-claims-step DUE_TICKS {
                 node: start,
-                current-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
+                current-distribution-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
                 rows: (list),
             })
         ))
@@ -446,21 +447,7 @@
 
 ;; --- Registration lifecycle helpers ---
 ;; These touch only the registration map and linked list; no STX moves here.
-;; The public register / update functions are thin compositions of them.
-
-;; Bookkeeping only. Remove the registration at `key`, splice out its
-;; linked-list node, and return the remaining number of cycle claims it had left.
-;; #[allow(unchecked_data)]
-(define-private (destroy-registration (key {
-    staker: principal,
-    signer-manager: principal,
-}))
-    (let ((registration (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED)))
-        (map-delete registrations key)
-        (ll-remove key)
-        (ok (get remaining-cycles registration))
-    )
-)
+;; The public register-for-claims function is a thin composition of them.
 
 ;; Bookkeeping only. Add `num-cycles` claims for {staker, signer}. If a
 ;; registration already exists it is topped up -- the bought cycles are added to
@@ -469,9 +456,8 @@
 ;; position is validated and a fresh registration is created, starting
 ;; next-reward-cycle at max(first-reward-cycle, current reward cycle) and appended
 ;; to the linked list. Moves no STX -- the fee is burned by the caller
-;; (`register-for-claims`), or the claims are carried from a destroyed
-;; registration (`update-registration`). Fails on a fresh registration if the
-;; position isn't under `signer`, and always if `num-cycles` is zero.
+;; (`register-for-claims`). Fails on a fresh registration if the position isn't
+;; under `signer`, and always if `num-cycles` is zero.
 (define-private (create-registration
         (staker principal)
         (signer principal)
@@ -522,9 +508,10 @@
 ;;                  the caller, so the contract never custodies STX.
 ;; The first claim targets max(first-reward-cycle, current reward cycle): an
 ;; already-earning staker starts this cycle (claimed the next distribution
-;; boundary), a freshly-staked one starts next cycle. Fails if this {staker,
-;; signer-manager} is already registered or `fee` buys no claims. Returns
-;; sweeps bought.
+;; boundary), a freshly-staked one starts next cycle. If this {staker,
+;; signer-manager} is already registered, the bought claims are added to its
+;; remaining-cycles instead. Fails if `fee` buys no claims. Returns claims
+;; bought this call.
 (define-public (register-for-claims
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
@@ -562,38 +549,8 @@
     )
 )
 
-;; Move the caller's own registration from `old-signer-manager` to
-;; `new-signer-manager` for `new-bond-index`, carrying its remaining sweeps
-;; across. `new-signer-manager` must be the caller's current pox-5 signer for
-;; the new position. No fee, nothing burned -- the sweeps already bought move
-;; with the registration. Atomic: a failed create reverts the destroy.
-;;
-;; WARNING: this forfeits any cycles the old signer still owes but hasn't been
-;; claimed for; those were only claimable via the old signer. Use once the old
-;; signer is drained. Returns sweeps carried over.
-(define-public (update-registration
-        (old-signer-manager principal)
-        (new-signer-manager principal)
-        (new-bond-index (optional uint))
-    )
-    (let ((carried (try! (destroy-registration {
-            staker: tx-sender,
-            signer-manager: old-signer-manager,
-        }))))
-        (try! (create-registration tx-sender new-signer-manager new-bond-index carried))
-        (print {
-            topic: "update-registration",
-            staker: tx-sender,
-            old-signer-manager: old-signer-manager,
-            new-signer-manager: new-signer-manager,
-            num-cycles: carried,
-        })
-        (ok carried)
-    )
-)
-
 ;; Bookkeeping only. Advance a registration one distribution cycle: mark it
-;; claimed in `current-dist-cycle`, decrement remaining-cycles (deleting the
+;; claimed in `current-distribution-cycle`, decrement remaining-cycles (deleting the
 ;; registration, and its linked-list node, at zero), and advance
 ;; next-reward-cycle by one once current-reward-cycle has passed it. Shared by the
 ;; ok and empty-cycle paths of process-reward-claim-impl.
@@ -610,7 +567,7 @@
             last-claim-dist-cycle: (optional uint),
         })
         (current-reward-cycle uint)
-        (current-dist-cycle uint)
+        (current-distribution-cycle uint)
     )
     (if (<= (get remaining-cycles registration) u1)
         ;; last claim: drop the registration entirely
@@ -619,15 +576,17 @@
             (ll-remove key)
         )
         (begin
-            (map-set registrations key
-                (merge registration {
-                    remaining-cycles: (- (get remaining-cycles registration) u1),
-                    next-reward-cycle: (if (> current-reward-cycle (get next-reward-cycle registration))
-                        (+ (get next-reward-cycle registration) u1)
-                        (get next-reward-cycle registration)
-                    ),
-                    last-claim-dist-cycle: (some current-dist-cycle),
-                })
+            (let ((next-reward-cycle (get next-reward-cycle registration)))
+                (map-set registrations key
+                    (merge registration {
+                        remaining-cycles: (- (get remaining-cycles registration) u1),
+                        next-reward-cycle: (if (> current-reward-cycle next-reward-cycle)
+                            (+ next-reward-cycle u1)
+                            next-reward-cycle
+                        ),
+                        last-claim-dist-cycle: (some current-distribution-cycle),
+                    })
+                )
             )
             true
         )
@@ -636,9 +595,9 @@
 
 ;; The one-claim primitive behind all three claim entrypoints. Looks up the
 ;; registration by {staker, signer-manager}. `current-reward-cycle` /
-;; `current-dist-cycle` are passed in rather than re-read, so a batch reads
+;; `current-distribution-cycle` are passed in rather than re-read, so a batch reads
 ;; them once; safe because this is private. Asserts the registration has a
-;; remaining sweep and wasn't already claimed in `current-dist-cycle`, then
+;; remaining sweep and wasn't already claimed in `current-distribution-cycle`, then
 ;; calls `claim-staker-rewards` and branches on the result (see the section
 ;; 3.2 docstring for the full table):
 ;;   * ok            -- the staker was paid; advance-registration and record any
@@ -655,7 +614,7 @@
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
         (current-reward-cycle uint)
-        (current-dist-cycle uint)
+        (current-distribution-cycle uint)
     )
     (let (
             (key {
@@ -667,14 +626,17 @@
             (bond-index (get bond-index registration))
         )
         (asserts! (> (get remaining-cycles registration) u0) ERR_NOT_REGISTERED)
-        (asserts! (not (is-eq (get last-claim-dist-cycle registration) (some current-dist-cycle)))
+        (asserts!
+            (not (is-eq (get last-claim-dist-cycle registration) (some current-distribution-cycle)))
             ERR_ALREADY_CLAIMED
         )
         (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
             claim-result
             ;; paid: advance and record any L1 withdrawal for later settlement
             (let ((withdrawal-request (get withdrawal-request claim-result)))
-                (advance-registration key registration current-reward-cycle current-dist-cycle)
+                (advance-registration key registration current-reward-cycle
+                    current-distribution-cycle
+                )
                 (match withdrawal-request
                     id (try! (append-pending-withdrawal key id))
                     true
@@ -704,7 +666,9 @@
                     )
                 )
                 (begin
-                    (advance-registration key registration current-reward-cycle current-dist-cycle)
+                    (advance-registration key registration current-reward-cycle
+                        current-distribution-cycle
+                    )
                     (print {
                         topic: "process-reward-claim",
                         staker: staker,
@@ -778,7 +742,7 @@
         (fold count-claim stakers {
             signer-manager: signer-manager,
             current-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle),
-            current-dist-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
+            current-distribution-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
             claimed: u0,
         })
     ))
@@ -793,12 +757,12 @@
         (state {
             signer-manager: <reward-claim-signer-manager-trait>,
             current-reward-cycle: uint,
-            current-dist-cycle: uint,
+            current-distribution-cycle: uint,
             claimed: uint,
         })
     )
     (match (process-reward-claim-impl staker (get signer-manager state) (get current-reward-cycle state)
-        (get current-dist-cycle state)
+        (get current-distribution-cycle state)
     )
         ok-val (merge state { claimed: (+ (get claimed state) u1) })
         err-code state

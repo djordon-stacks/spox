@@ -9,8 +9,6 @@ import {
   ERR_UNKNOWN_PENDING_WITHDRAWAL,
   ERR_ZERO_FEE,
   FEE_PER_CLAIM,
-  MOCK_SIGNER_MANAGER,
-  MOCK_SIGNER_PRIVATE_KEY,
   SIGNER_MANAGER,
   SIGNER_PRIVATE_KEY,
   SIGNER_SET_MIN_USTX,
@@ -26,13 +24,11 @@ import {
   processRewardClaim,
   registerForBond,
   registerForClaims,
-  registerMockSignerManager,
   registerSignerManager,
   rejectWithdrawal,
   sbtcBalance,
   setupBond,
   stakeFor,
-  stakeUpdate,
   stakeWithPoxAddr,
   stxBalance,
   wallet1,
@@ -469,122 +465,6 @@ describe("process-reward-claims (batch)", () => {
 
     // wallet2 is skipped, so only wallet1 is due
     expect(getDueClaims()).toBeOk(Cl.list([]));
-  });
-});
-
-describe("update-registration", () => {
-  // A second signer-manager (the mock) is registered with pox-5 so a
-  // registration can be genuinely moved between managers. wallet1 stakes under
-  // the real signer-manager; the carry path moves both its pox-5 stake (via
-  // stake-update) and its registration onto the mock.
-  beforeEach(() => {
-    initPox5();
-    registerSignerManager(SIGNER_PRIVATE_KEY);
-    registerMockSignerManager(MOCK_SIGNER_PRIVATE_KEY);
-    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
-  });
-
-  it("carries all its sweeps to the mock signer-manager, burning nothing", () => {
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    // move wallet1's pox-5 stake to the mock, so it is the signer pox-5 reports
-    stakeUpdate(wallet1, MOCK_SIGNER_MANAGER, SIGNER_MANAGER);
-
-    const before = stxBalance(wallet1);
-    const { result } = simnet.callPublicFn(
-      "reward-claim-registry",
-      "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
-      wallet1,
-    );
-    expect(result).toBeOk(Cl.uint(3)); // all 3 sweeps carried across
-
-    // the carry reuses already-bought sweeps, so nothing is burned
-    expect(stxBalance(wallet1)).toBe(before);
-
-    // the old key is gone; the mock key now holds the carried sweeps
-    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
-    expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
-      Cl.tuple({
-        "bond-index": Cl.none(),
-        "remaining-cycles": Cl.uint(3),
-        "next-reward-cycle": Cl.uint(1),
-        "last-claim-dist-cycle": Cl.none(),
-      }),
-    );
-  });
-
-  it("carries only the sweeps left after some were consumed", () => {
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    // consume one sweep (empty-cycle advance): 3 -> 2
-    processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
-    stakeUpdate(wallet1, MOCK_SIGNER_MANAGER, SIGNER_MANAGER);
-
-    const { result } = simnet.callPublicFn(
-      "reward-claim-registry",
-      "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
-      wallet1,
-    );
-    expect(result).toBeOk(Cl.uint(2)); // only the 2 remaining sweeps carry over
-
-    // recreating under the mock clears last-claim-dist-cycle
-    expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
-      Cl.tuple({
-        "bond-index": Cl.none(),
-        "remaining-cycles": Cl.uint(2),
-        "next-reward-cycle": Cl.uint(1),
-        "last-claim-dist-cycle": Cl.none(),
-      }),
-    );
-    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
-  });
-
-  it("rejects when the caller has no registration to carry", () => {
-    // wallet1 is staked but never registered -> the destroy side errs
-    const { result } = simnet.callPublicFn(
-      "reward-claim-registry",
-      "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
-      wallet1,
-    );
-    expect(result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
-  });
-
-  it("acts on the caller's own registration, not another staker's", () => {
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    // wallet2 has no registration; its update fails even though wallet1 has one
-    const { result } = simnet.callPublicFn(
-      "reward-claim-registry",
-      "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
-      wallet2,
-    );
-    expect(result).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
-    // wallet1's registration is untouched
-    expect(getDueClaims()).toBeOk(Cl.list([registered(wallet1)]));
-  });
-
-  it("is atomic: a failed carry leaves the original registration intact", () => {
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    // wallet1 has no position under the mock (its stake is still under the real
-    // signer-manager), so the create side fails; the destroy must roll back.
-    const { result } = simnet.callPublicFn(
-      "reward-claim-registry",
-      "update-registration",
-      [Cl.principal(SIGNER_MANAGER), Cl.principal(MOCK_SIGNER_MANAGER), Cl.none()],
-      wallet1,
-    );
-    expect(result).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
-    // original registration still intact
-    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
-      Cl.tuple({
-        "bond-index": Cl.none(),
-        "remaining-cycles": Cl.uint(3),
-        "next-reward-cycle": Cl.uint(1),
-        "last-claim-dist-cycle": Cl.none(),
-      }),
-    );
-    expect(getDueClaims()).toBeOk(Cl.list([registered(wallet1)]));
   });
 });
 

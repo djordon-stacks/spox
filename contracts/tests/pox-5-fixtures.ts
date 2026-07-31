@@ -30,7 +30,6 @@ export const wallet3 = accounts.get("wallet_3")!;
 export const wallet4 = accounts.get("wallet_4")!;
 
 export const SIGNER_MANAGER = `${deployer}.signer-manager`;
-export const MOCK_SIGNER_MANAGER = `${deployer}.mock-signer-manager`;
 export const SWEEP_REGISTRY = `${deployer}.reward-claim-registry`;
 export const SBTC_TOKEN =
   "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
@@ -54,10 +53,8 @@ const POX5_SIGNER_DOMAIN = { name: "pox-5-signer", version: "1.0.0" };
 /** simnet runs with the testnet chain-id. */
 const CHAIN_ID = 2147483648;
 
-// Distinct signer keys for the two signer-managers. Any valid secp256k1 private
-// key works; they only need to differ so each signer registers its own key.
+// The signer-manager's signer key. Any valid secp256k1 private key works.
 export const SIGNER_PRIVATE_KEY = "a".repeat(63) + "1";
-export const MOCK_SIGNER_PRIVATE_KEY = "b".repeat(63) + "2";
 
 // reward-claim-registry error codes
 export const ERR_NOT_REGISTERED = 600n;
@@ -222,52 +219,6 @@ export function registerSignerManager(privateKey: string) {
       Cl.bufferFromHex(signerSig),
     ],
     deployer,
-  );
-}
-
-/**
- * Register the mock-signer-manager with pox-5 as a real signer. Its permissive
- * validate-stake! lets a wallet hold a genuine pox-5 position under it, so it can
- * serve as a second signer-manager to move a registration to.
- */
-export function registerMockSignerManager(privateKey: string) {
-  const authId = authIdCounter++;
-  const signerKey = compressPublicKey(privateKeyToPublic(privateKey));
-  const signerSig = signSignerKeyGrant(MOCK_SIGNER_MANAGER, authId, privateKey);
-  return simnet.callPublicFn(
-    "mock-signer-manager",
-    "register-self",
-    [
-      Cl.principal(MOCK_SIGNER_MANAGER),
-      Cl.bufferFromHex(signerKey),
-      Cl.uint(authId),
-      Cl.bufferFromHex(signerSig),
-    ],
-    deployer,
-  );
-}
-
-/**
- * Move `staker`'s STX stake from `oldSigner` to `newSigner` via pox-5
- * stake-update (no term extension, no amount increase). Afterwards pox-5 reports
- * `newSigner` as the staker's signer.
- */
-export function stakeUpdate(
-  staker: string,
-  newSigner: string,
-  oldSigner: string,
-) {
-  return simnet.callPublicFn(
-    POX5,
-    "stake-update",
-    [
-      Cl.principal(newSigner),
-      Cl.principal(oldSigner),
-      Cl.uint(0),
-      Cl.uint(0),
-      Cl.none(),
-    ],
-    staker,
   );
 }
 
