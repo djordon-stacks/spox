@@ -7,23 +7,21 @@
 
 ;; No registration for this staker and signer-manager combination
 (define-constant ERR_NOT_REGISTERED (err u600))
-;; This staker and signer-manager combination is already registered
-(define-constant ERR_ALREADY_REGISTERED (err u601))
 ;; The registration fee is  too small to buy even one sweep
-(define-constant ERR_INSUFFICIENT_FEE (err u602))
+(define-constant ERR_INSUFFICIENT_FEE (err u601))
 ;; The caller is not an admin to an admin only function
-(define-constant ERR_NOT_ADMIN (err u603))
+(define-constant ERR_NOT_ADMIN (err u602))
 ;; The staker has no active pox-5 position under this signer
-(define-constant ERR_NO_CURRENT_POSITION (err u604))
+(define-constant ERR_NO_CURRENT_POSITION (err u603))
 ;; The registration fee must be greater than zero
-(define-constant ERR_ZERO_FEE (err u605))
+(define-constant ERR_ZERO_FEE (err u604))
 ;; The registration was already claimed this distribution cycle
-(define-constant ERR_ALREADY_CLAIMED (err u606))
+(define-constant ERR_ALREADY_CLAIMED (err u605))
 ;; This should be unreachable: a registration buys at most 192 claims and each claim
 ;; adds at most one pending withdrawal, so the 192-slot list can never overflow
-(define-constant ERR_TOO_MANY_PENDING (err u607))
+(define-constant ERR_TOO_MANY_PENDING (err u606))
 ;; The request-id is not a tracked pending withdrawal for this key
-(define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u608))
+(define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
 ;; signer-manager's ERR_NO_CLAIMABLE_REWARDS, matched (not propagated) in
 ;; process-reward-claim-impl so a genuinely empty cycle advances instead of stalling.
 (define-constant SM_ERR_NO_CLAIMABLE_REWARDS u1001)
@@ -31,6 +29,7 @@
 ;; A (list 100 uint) whose only job is to bound the get-due-claims /
 ;; get-due-settlements folds to at most DUE_PAGE_SIZE (100) node visits per
 ;; call. The element values are never read (the fold step ignores `tick`).
+;; @format-ignore
 (define-constant DUE_TICKS (list
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
@@ -446,7 +445,7 @@
 ;; The public register / update functions are thin compositions of them.
 
 ;; Bookkeeping only. Remove the registration at `key`, splice out its
-;; linked-list node, and return the sweeps it had left.
+;; linked-list node, and return the remaining number of cycle claims it had left.
 ;; #[allow(unchecked_data)]
 (define-private (destroy-registration (key {
     staker: principal,
@@ -459,37 +458,49 @@
     )
 )
 
-;; Bookkeeping only. Validate the staker's position and create the registration
-;; at {staker, signer} with `num-cycles` claims, starting next-reward-cycle at
-;; max(first-reward-cycle, current reward cycle). Moves no STX -- the fee is
-;; burned by the caller (`register-for-claims`), or the claims are carried from a
-;; destroyed registration (`update-registration`). Fails if already registered
-;; or the position isn't under `signer`.
+;; Bookkeeping only. Add `num-cycles` claims for {staker, signer}. If a
+;; registration already exists it is topped up -- the bought cycles are added to
+;; its remaining-cycles and its tracked position and schedule are left untouched
+;; (no re-validation, no second linked-list node). Otherwise the staker's current
+;; position is validated and a fresh registration is created, starting
+;; next-reward-cycle at max(first-reward-cycle, current reward cycle) and appended
+;; to the linked list. Moves no STX -- the fee is burned by the caller
+;; (`register-for-claims`), or the claims are carried from a destroyed
+;; registration (`update-registration`). Fails on a fresh registration if the
+;; position isn't under `signer`, and always if `num-cycles` is zero.
 (define-private (create-registration
         (staker principal)
         (signer principal)
         (bond-index (optional uint))
         (num-cycles uint)
     )
-    (let (
-            (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
-            (position (unwrap! (get-position staker bond-index) ERR_NO_CURRENT_POSITION))
-            (key {
-                staker: staker,
-                signer-manager: signer,
-            })
-        )
-        (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
-        (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
+    (let ((key {
+            staker: staker,
+            signer-manager: signer,
+        }))
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        (map-set registrations key {
-            bond-index: bond-index,
-            remaining-cycles: num-cycles,
-            next-reward-cycle: (max-uint (get first-reward-cycle position) current-reward),
-            last-claim-dist-cycle: none,
-        })
-        (ll-append key)
-        (ok true)
+        (match (map-get? registrations key)
+            existing
+            ;; top up: add the bought cycles to the existing registration
+            (ok (map-set registrations key
+                (merge existing { remaining-cycles: (+ (get remaining-cycles existing) num-cycles) })
+            ))
+            ;; new: validate the staker's current position, then create
+            (let (
+                    (position (unwrap! (get-position staker bond-index) ERR_NO_CURRENT_POSITION))
+                    (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
+                )
+                (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
+                (map-set registrations key {
+                    bond-index: bond-index,
+                    remaining-cycles: num-cycles,
+                    next-reward-cycle: (max-uint (get first-reward-cycle position) current-reward),
+                    last-claim-dist-cycle: none,
+                })
+                (ll-append key)
+                (ok true)
+            )
+        )
     )
 )
 
@@ -561,12 +572,10 @@
         (new-signer-manager principal)
         (new-bond-index (optional uint))
     )
-    (let (
-            (carried (try! (destroy-registration {
-                staker: tx-sender,
-                signer-manager: old-signer-manager,
-            })))
-        )
+    (let ((carried (try! (destroy-registration {
+            staker: tx-sender,
+            signer-manager: old-signer-manager,
+        }))))
         (try! (create-registration tx-sender new-signer-manager new-bond-index carried))
         (print {
             topic: "update-registration",

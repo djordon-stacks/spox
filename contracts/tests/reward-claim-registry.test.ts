@@ -1,7 +1,6 @@
 import { Cl } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  ERR_ALREADY_REGISTERED,
   ERR_ALREADY_CLAIMED,
   ERR_INSUFFICIENT_FEE,
   ERR_NO_CURRENT_POSITION,
@@ -227,12 +226,22 @@ describe("register-for-claims", () => {
     expect(result).toBeOk(Cl.uint(1));
   });
 
-  it("rejects a duplicate registration", () => {
-    const { result } = registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    expect(result).toBeOk(Cl.uint(1));
+  it("tops up an existing registration instead of erroring on a duplicate", () => {
+    const first = registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    expect(first.result).toBeOk(Cl.uint(1));
 
-    expect(registerForSweep(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none()).result).toBeErr(
-      Cl.uint(ERR_ALREADY_REGISTERED),
+    // registering the same {staker, signer-manager} again adds to remaining-cycles
+    // rather than failing; the return is the cycles bought on this call.
+    const second = registerForSweep(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    expect(second.result).toBeOk(Cl.uint(2));
+
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-cycles": Cl.uint(3), // 1 + 2
+        "next-reward-cycle": Cl.uint(1),
+        "last-claim-dist-cycle": Cl.none(),
+      }),
     );
   });
 

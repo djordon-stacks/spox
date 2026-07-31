@@ -61,14 +61,13 @@ export const MOCK_SIGNER_PRIVATE_KEY = "b".repeat(63) + "2";
 
 // reward-claim-registry error codes
 export const ERR_NOT_REGISTERED = 600n;
-export const ERR_ALREADY_REGISTERED = 601n;
-export const ERR_INSUFFICIENT_FEE = 602n;
-export const ERR_NOT_ADMIN = 603n;
-export const ERR_NO_CURRENT_POSITION = 604n;
-export const ERR_ZERO_FEE = 605n;
-export const ERR_ALREADY_CLAIMED = 606n;
-export const ERR_TOO_MANY_PENDING = 607n;
-export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 608n;
+export const ERR_INSUFFICIENT_FEE = 601n;
+export const ERR_NOT_ADMIN = 602n;
+export const ERR_NO_CURRENT_POSITION = 603n;
+export const ERR_ZERO_FEE = 604n;
+export const ERR_ALREADY_CLAIMED = 605n;
+export const ERR_TOO_MANY_PENDING = 606n;
+export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 607n;
 
 /** reward-claim-registry's default fee-per-sweep. */
 export const FEE_PER_CLAIM = 100_000n;
