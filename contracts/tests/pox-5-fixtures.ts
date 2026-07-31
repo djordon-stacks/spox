@@ -433,7 +433,7 @@ export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle: bigint) 
 // reward-claim-registry helpers
 // ---------------------------------------------------------------------------
 
-export function registerForSweep(
+export function registerForClaims(
   staker: string,
   fee: bigint,
   sender: string,
@@ -448,7 +448,7 @@ export function registerForSweep(
   );
 }
 
-export function performSweep(
+export function processRewardClaim(
   staker: string,
   sender: string,
   signerManager: string,
@@ -470,7 +470,7 @@ export function getRegistration(staker: string, signerManager: string) {
   ).result;
 }
 
-export function getDueSweeps(cursor = Cl.none()) {
+export function getDueClaims(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
     "reward-claim-registry",
     "get-due-claims",

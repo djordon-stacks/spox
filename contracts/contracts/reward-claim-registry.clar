@@ -161,6 +161,10 @@
     )
 )
 
+(define-read-only (get-fee-per-cycle)
+    (var-get fee-per-cycle)
+)
+
 ;; --- Doubly-linked-list maintenance over registration-ll ---
 ;; The list lets get-due-claims walk every live registration without a global
 ;; index. `registration-ll-head`/`-tail` bound the walk; each node stores its
