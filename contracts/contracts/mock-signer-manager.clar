@@ -28,6 +28,23 @@
   )
 )
 
+;; Stub to satisfy the trait; the reward-claim-registry ignores the return.
+;; Returns one dummy bond-rewards element so the list element type is explicit.
+;; #[allow(unnecessary_public)]
+(define-public (claim-rewards
+    ;; #[allow(unused_binding)]
+    (bond-periods (list 6 uint))
+    ;; #[allow(unused_binding)]
+    (reward-cycle uint)
+  )
+  (ok {
+    stx-rewards: { earned: u0, rewards-per-token: u0 },
+    bond-rewards: (list { earned: u0, bond-index: u0, rewards-per-token: u0 }),
+    bond-totals: u0,
+    total-rewards: u0,
+  })
+)
+
 ;; #[allow(unnecessary_public)]
 (define-public (settle-accepted-withdrawal
   ;; #[allow(unused_binding)]

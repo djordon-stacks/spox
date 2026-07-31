@@ -358,12 +358,12 @@ export function stakeFor(staker: string, amount: bigint, numCycles: bigint) {
 }
 
 /**
- * Move rewards into the signer-manager for `rewardCycle`: fund pox-5 with sBTC,
- * advance to that cycle's distribution boundary, run pox-5 calculate-rewards,
- * then signer-manager claim-rewards (which is what makes rewards visible to
- * stakers, and what process-reward-claim requires to have happened).
+ * Fund pox-5 with sBTC for `rewardCycle`, advance to that cycle's distribution
+ * boundary, and run pox-5 calculate-rewards -- but NOT the signer-manager
+ * claim-rewards step. This leaves pox-5's get-earned > 0 for the signer, which is
+ * the state process-reward-claim now heals itself (it calls claim-rewards).
  */
-export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle: bigint) {
+export function fundAndCalculateRewards(rewards: bigint, rewardCycle: bigint) {
   simnet.callPublicFn(
     SBTC_TOKEN,
     "transfer",
@@ -371,13 +371,38 @@ export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle: bigint) 
     deployer,
   );
   mineUntil(rewardCycleToBurnHeight(rewardCycle) + HALF_CYCLE_LENGTH);
-  simnet.callPublicFn(POX5, "calculate-rewards", [Cl.list([])], deployer);
+  return simnet.callPublicFn(POX5, "calculate-rewards", [Cl.list([])], deployer);
+}
+
+/**
+ * Move rewards into the signer-manager for `rewardCycle`: fund + calculate (see
+ * fundAndCalculateRewards), then the signer-manager claim-rewards. This is the
+ * fully pre-pulled state (get-earned == 0); process-reward-claim then pays
+ * directly without needing to pull.
+ */
+export function fundAndClaimSignerRewards(rewards: bigint, rewardCycle: bigint) {
+  fundAndCalculateRewards(rewards, rewardCycle);
   return simnet.callPublicFn(
     "signer-manager",
     "claim-rewards",
     [Cl.list([]), Cl.uint(rewardCycle)],
     deployer,
   );
+}
+
+/** pox-5's get-earned for a signer/cycle/scope: rewards still owed (unpulled). */
+export function getEarned(
+  signerManager: string,
+  rewardCycle: bigint,
+  bondIndex: OptionalCV<UIntCV>,
+): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "get-earned",
+    [Cl.principal(signerManager), Cl.uint(rewardCycle), bondIndex],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
 }
 
 // ---------------------------------------------------------------------------

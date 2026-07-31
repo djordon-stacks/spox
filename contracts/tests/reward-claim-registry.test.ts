@@ -16,9 +16,11 @@ import {
   bondPeriodToRewardCycle,
   currentDistributionCycle,
   deployer,
+  fundAndCalculateRewards,
   fundAndClaimSignerRewards,
   getDueSettlements,
   getDueClaims,
+  getEarned,
   getRegistration,
   initPox5,
   processRewardClaim,
@@ -375,6 +377,36 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getDueClaims()).toBeOk(Cl.list([]));
   });
 
+  it("pulls claim-rewards itself when the signer-manager hasn't, then pays", () => {
+    // fund + calculate-rewards, but DON'T run the signer-manager claim-rewards --
+    // a "dumb" keeper never pulls. pox-5 still shows rewards owed to the signer.
+    fundAndCalculateRewards(2000n, 1n);
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
+
+    const stakerBefore = sbtcBalance(wallet1);
+    const distCycle = currentDistributionCycle();
+
+    // process-reward-claim detects rewards are owed and calls claim-rewards itself
+    const { result } = processRewardClaim(wallet1, wallet2, SIGNER_MANAGER);
+    expect(result).toBeOk(Cl.none());
+
+    // the registry pulled the rewards: pox-5 now shows nothing owed...
+    expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBe(0n);
+    // ...and the staker was paid out of them
+    expect(sbtcBalance(wallet1) - stakerBefore).toBeGreaterThan(0n);
+
+    // registration advanced and marked swept, same as the pre-pulled path
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.none(),
+        "remaining-cycles": Cl.uint(2),
+        "next-reward-cycle": Cl.uint(1),
+        "last-claim-dist-cycle": Cl.some(Cl.uint(distCycle)),
+      }),
+    );
+  });
+
   it("advances past a genuinely empty cycle without stalling", () => {
     // registered, but no rewards were ever funded/claimed:
     // claim errs u1001 AND get-earned == 0 -> advance, returns (ok none)
@@ -445,6 +477,32 @@ describe("process-reward-claims (batch)", () => {
     expect(result).toBeOk(Cl.uint(2));
 
     // both are swept this distribution cycle, so none are due again
+    expect(getDueClaims()).toBeOk(Cl.list([]));
+  });
+
+  it("self-pulls once for the batch when claim-rewards wasn't called", () => {
+    // rewards calculated but never pulled by the signer-manager
+    fundAndCalculateRewards(2000n, 1n);
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
+    expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
+
+    const w1Before = sbtcBalance(wallet1);
+    const w2Before = sbtcBalance(wallet2);
+
+    // the first staker's claim pulls the whole signer's cycle rewards; the
+    // second sees get-earned == 0 and skips the pull -- both still get paid.
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "process-reward-claims",
+      [Cl.principal(SIGNER_MANAGER), Cl.list([Cl.principal(wallet1), Cl.principal(wallet2)])],
+      wallet3,
+    );
+    expect(result).toBeOk(Cl.uint(2));
+
+    expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBe(0n);
+    expect(sbtcBalance(wallet1) - w1Before).toBeGreaterThan(0n);
+    expect(sbtcBalance(wallet2) - w2Before).toBeGreaterThan(0n);
     expect(getDueClaims()).toBeOk(Cl.list([]));
   });
 

@@ -597,18 +597,22 @@
 ;; registration by {staker, signer-manager}. `current-reward-cycle` /
 ;; `current-distribution-cycle` are passed in rather than re-read, so a batch reads
 ;; them once; safe because this is private. Asserts the registration has a
-;; remaining sweep and wasn't already claimed in `current-distribution-cycle`, then
-;; calls `claim-staker-rewards` and branches on the result (see the section
-;; 3.2 docstring for the full table):
+;; remaining sweep and wasn't already claimed in `current-distribution-cycle`.
+;;
+;; Self-healing: if pox-5 still shows rewards owed to the signer for this cycle
+;; (get-earned > u0), the signer-manager hasn't pulled them in yet, so this calls
+;; `claim-rewards` itself before claiming for the staker -- the keeper never has
+;; to. It is idempotent across a batch: the first staker under a given (signer,
+;; cycle, scope) pulls the rewards, which drops get-earned to u0, so the rest skip
+;; it. Then branches on `claim-staker-rewards`:
 ;;   * ok            -- the staker was paid; advance-registration and record any
 ;;                     withdrawal-request for later settlement.
-;;   * ERR_NO_CLAIMABLE_REWARDS (u1001) with pox-5 get-earned == u0 -- a
-;;                     genuinely empty cycle; advance past it (no pending) so the
-;;                     registration never stalls.
-;;   * ERR_NO_CLAIMABLE_REWARDS with get-earned > u0 -- claim-rewards hasn't run;
-;;                     return the error so the keeper runs it and retries.
+;;   * ERR_NO_CLAIMABLE_REWARDS (u1001) -- after ensuring rewards were pulled,
+;;                     this staker earned nothing this cycle (genuinely empty, or a
+;;                     zero share); advance past it so it never stalls.
 ;;   * any other err -- returned unchanged.
-;; No STX moves -- the fee was burned at registration.
+;; The fee moved no STX (burned at registration); `claim-rewards` does move sBTC
+;; from pox-5 into the signer-manager.
 ;; #[allow(unchecked_data)]
 (define-private (process-reward-claim-impl
         (staker principal)
@@ -617,9 +621,10 @@
         (current-distribution-cycle uint)
     )
     (let (
+            (signer-manager-contract (contract-of signer-manager))
             (key {
                 staker: staker,
-                signer-manager: (contract-of signer-manager),
+                signer-manager: signer-manager-contract,
             })
             (registration (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED))
             (reward-cycle (get next-reward-cycle registration))
@@ -629,6 +634,27 @@
         (asserts!
             (not (is-eq (get last-claim-dist-cycle registration) (some current-distribution-cycle)))
             ERR_ALREADY_CLAIMED
+        )
+        ;; Ensure the signer-manager has pulled this cycle's rewards from pox-5.
+        ;; get-earned > u0 means claim-rewards is still owed for this scope, so
+        ;; pull it now (STX-stake rewards for a `none` bond, or bond `idx`).
+        (if (>
+                (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-earned
+                    signer-manager-contract reward-cycle bond-index
+                )
+                u0
+            )
+            (begin
+                (try! (contract-call? signer-manager claim-rewards
+                    (match bond-index
+                        idx (list idx)
+                        (list)
+                    )
+                    reward-cycle
+                ))
+                true
+            )
+            true
         )
         (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
             claim-result
@@ -653,18 +679,9 @@
                 (ok withdrawal-request)
             )
             err-code
-            ;; nothing to claim: step past the cycle only if the signer's
-            ;; rewards for it are already pulled in (get-earned == u0); otherwise
-            ;; claim-rewards must run first, so surface the error unchanged
-            (if (and
-                    (is-eq err-code SM_ERR_NO_CLAIMABLE_REWARDS)
-                    (is-eq
-                        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-earned
-                            (contract-of signer-manager) reward-cycle bond-index
-                        )
-                        u0
-                    )
-                )
+            ;; after ensuring rewards were pulled, u1001 means this staker earned
+            ;; nothing this cycle; advance past it. any other error is surfaced.
+            (if (is-eq err-code SM_ERR_NO_CLAIMABLE_REWARDS)
                 (begin
                     (advance-registration key registration current-reward-cycle
                         current-distribution-cycle
