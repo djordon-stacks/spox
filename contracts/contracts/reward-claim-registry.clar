@@ -172,9 +172,15 @@
     )
 )
 
-;; First distribution cycle a registration covers for start reward-cycle `s`:
-;; bond -> 2s, non-bond -> 2s+1. Equivalent to (2s - 1) + step without uint
-;; underflow when s is 0.
+;; First distribution cycle a registration covers for start reward-cycle.
+;; 
+;; For bond holders: the first distribution is the first half of the
+;; start-reward-cycle.
+;;
+;; For non-bond holders: the first distribution is the second half of the
+;; start-reward-cycle.
+;;
+;; #[allow(unchecked_data)]
 (define-private (initial-next-claim-distribution
         (start-reward-cycle uint)
         (bond-index (optional uint))

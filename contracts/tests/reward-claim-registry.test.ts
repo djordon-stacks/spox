@@ -14,6 +14,8 @@ import {
   SIGNER_SET_MIN_USTX,
   acceptWithdrawal,
   bondPeriodToRewardCycle,
+  currentDistributionCycle,
+  currentRewardCycle,
   deployer,
   fundAndCalculateRewards,
   fundAndClaimSignerRewards,
@@ -271,6 +273,105 @@ describe("register-for-claims", () => {
     expect(getDueClaims()).toBeOk(Cl.list([]));
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getDueClaims()).toBeOk(Cl.list([dueRow(wallet1, STX_START, Cl.none())]));
+  });
+});
+
+// Pins the STX eligibility boundary against an off-by-one that would claim
+// the current reward cycle before it has finished accruing.
+//
+// Reward cycle r owns distribution cycles 2r and 2r+1. STX registrations
+// use step 2, so next-claim-distribution is always the second half (2r+1).
+// Eligible only when next-claim-distribution < current-distribution-cycle,
+// which is equivalent to requiring the current distribution cycle landing
+// in a later reward cycle.
+describe("STX claim eligibility boundary (no off-by-one)", () => {
+  beforeEach(() => {
+    initPox5();
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
+  });
+
+  it("seeds next-claim-distribution on the second half of a reward cycle (odd)", () => {
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    expect(STX_FIRST_CLAIM_DIST % 2n).toBe(1n);
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(1n, STX_FIRST_CLAIM_DIST),
+    );
+    // 2r+1 for r=1 -> distribution 3 is the second half of reward cycle 1
+    expect(STX_FIRST_CLAIM_DIST / 2n).toBe(STX_START);
+  });
+
+  it("rejects claiming in the second half while CD == next (same reward cycle still live)", () => {
+    // fundAndClaimSignerRewards(cycle 1) lands at burn 150 -> CD=3, RC=1
+    // (second half of reward cycle 1). Registering here seeds next=3.
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+
+    expect(currentDistributionCycle()).toBe(STX_FIRST_CLAIM_DIST); // 3
+    expect(currentRewardCycle()).toBe(STX_START); // 1
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+    );
+
+    // next == CD, and floor(next/2) == current reward cycle: not accrued yet.
+    expect(getDueClaims()).toBeOk(Cl.list([]));
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+      Cl.uint(ERR_ALREADY_CLAIMED),
+    );
+    // registration untouched
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+    );
+  });
+
+  it("becomes due only once CD advances past next (current reward cycle > claim's)", () => {
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    expect(currentDistributionCycle()).toBe(STX_FIRST_CLAIM_DIST);
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+      Cl.uint(ERR_ALREADY_CLAIMED),
+    );
+
+    // Enter first half of reward cycle 2: CD=4 > next=3, RC=2 > 1
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+    expect(currentDistributionCycle()).toBe(STX_FIRST_CLAIM_DIST + 1n);
+    expect(currentRewardCycle()).toBe(STX_START + 1n);
+    expect(getDueClaims()).toBeOk(Cl.list([dueRow(wallet1, STX_START, Cl.none())]));
+
+    const stakerBefore = sbtcBalance(wallet1);
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+    expect(sbtcBalance(wallet1) - stakerBefore).toBeGreaterThan(0n);
+    // stepped by 2 to the next second-half distribution (reward cycle 2)
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
+    );
+  });
+
+  it("after a claim, the next second-half target is again blocked until that cycle ends", () => {
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+
+    const nextAfter = STX_FIRST_CLAIM_DIST + 2n; // 5 = second half of reward cycle 2
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(2n, nextAfter),
+    );
+
+    // Sit in the second half of reward cycle 2 (CD=5 == next): still the live cycle.
+    mineUntilPastDistribution(nextAfter - 1n); // CD becomes 5
+    expect(currentDistributionCycle()).toBe(nextAfter);
+    expect(currentRewardCycle()).toBe(2n);
+    expect(getDueClaims()).toBeOk(Cl.list([]));
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+      Cl.uint(ERR_ALREADY_CLAIMED),
+    );
+
+    // Past it (CD=6, RC=3): now claimable for reward cycle 2
+    mineUntilPastDistribution(nextAfter);
+    expect(currentDistributionCycle()).toBe(nextAfter + 1n);
+    expect(currentRewardCycle()).toBe(3n);
+    expect(getDueClaims()).toBeOk(Cl.list([dueRow(wallet1, 2n, Cl.none())]));
   });
 });
 
