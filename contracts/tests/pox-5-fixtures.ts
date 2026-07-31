@@ -124,6 +124,33 @@ export function currentDistributionCycle(): bigint {
   return (result as unknown as { value: bigint }).value;
 }
 
+export function distributionCycleToBurnHeight(cycle: bigint): bigint {
+  const { result } = simnet.callReadOnlyFn(
+    POX5,
+    "distribution-cycle-to-burn-height",
+    [Cl.uint(cycle)],
+    deployer,
+  );
+  return (result as unknown as { value: bigint }).value;
+}
+
+/**
+ * Mine until current-distribution-cycle > distCycle, so a registration whose
+ * next-claim-distribution is `distCycle` becomes eligible (k < CD).
+ */
+export function mineUntilPastDistribution(distCycle: bigint) {
+  mineUntil(distributionCycleToBurnHeight(distCycle + 1n));
+}
+
+/**
+ * Initial next-claim-distribution for start reward-cycle `s`:
+ * bond (step 1) -> 2s, STX (step 2) -> 2s+1.
+ */
+export function initialNextClaimDistribution(startRewardCycle: bigint, isBond: boolean): bigint {
+  const step = isBond ? 1n : 2n;
+  return 2n * startRewardCycle + step - 1n;
+}
+
 export function sbtcBalance(who: string): bigint {
   const { result } = simnet.callReadOnlyFn(
     SBTC_TOKEN,
