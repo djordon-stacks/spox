@@ -607,6 +607,70 @@
     )
 )
 
+;; Shared by process-reward-claim-impl after any claim-rewards pull (or when none
+;; was needed). Always advances one installment whether claim-staker-rewards
+;; pays or errors, so an untrusted signer-manager cannot stall the registration.
+;; #[allow(unchecked_data)]
+(define-private (claim-staker-and-advance
+        (staker principal)
+        (signer-manager <reward-claim-signer-manager-trait>)
+        (key {
+            staker: principal,
+            signer-manager: principal,
+        })
+        (registration {
+            bond-index: (optional uint),
+            remaining-cycles: uint,
+            next-claim-distribution: uint,
+        })
+        (reward-cycle uint)
+        (claim-distribution uint)
+        (bond-index (optional uint))
+    )
+    (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
+        claim-result
+        ;; paid: advance and record any L1 withdrawal for later settlement
+        (let ((withdrawal-request (get withdrawal-request claim-result)))
+            (advance-registration key registration)
+            (match withdrawal-request
+                id (try! (append-pending-withdrawal key id))
+                true
+            )
+            (print {
+                topic: "process-reward-claim",
+                staker: staker,
+                signer-manager: (contract-of signer-manager),
+                reward-cycle: reward-cycle,
+                claim-distribution: claim-distribution,
+                bond-index: bond-index,
+                earned: (get earned claim-result),
+                claim-error: none,
+                withdrawal-request: withdrawal-request,
+            })
+            (ok withdrawal-request)
+        )
+        err-code
+        ;; not paid -- empty cycle, a zero share, or a claim failure. Advance
+        ;; past it regardless so a single staker's problem never stalls the
+        ;; registration or a batch; the error code rides in the event.
+        (begin
+            (advance-registration key registration)
+            (print {
+                topic: "process-reward-claim",
+                staker: staker,
+                signer-manager: (contract-of signer-manager),
+                reward-cycle: reward-cycle,
+                claim-distribution: claim-distribution,
+                bond-index: bond-index,
+                earned: u0,
+                claim-error: (some err-code),
+                withdrawal-request: none,
+            })
+            (ok none)
+        )
+    )
+)
+
 ;; The one-claim primitive behind all three claim entrypoints. Looks up the
 ;; registration by {staker, signer-manager}. `current-distribution-cycle` is
 ;; passed in rather than re-read, so a batch reads it once. Asserts budget
@@ -617,13 +681,13 @@
 ;; `claim-rewards` itself before claiming for the staker -- the keeper never has
 ;; to. It is idempotent across a batch: the first staker under a given (signer,
 ;; cycle, scope) pulls the rewards, which drops get-earned to u0, so the rest skip
-;; it. Then, whatever `claim-staker-rewards` returns, the registration ALWAYS
-;; advances one installment:
+;; it. A failed pull still advances (same anti-stall rule as claim-staker-rewards):
+;; the signer-manager is untrusted and must not wedge the registration. On a
+;; successful pull (or when none was needed), claim-staker-and-advance runs:
 ;;   * ok  -- the staker was paid; record any withdrawal-request for later
 ;;            settlement and return it.
 ;;   * err -- empty cycle, a zero share, or a claim failure; advance past it
-;;            anyway so a single staker's problem never stalls the registration or
-;;            a batch. The error code is surfaced in the print event.
+;;            anyway. The error code is surfaced in the print event.
 ;; The fee moved no STX (burned at registration); `claim-rewards` does move sBTC
 ;; from pox-5 into the signer-manager.
 ;; #[allow(unchecked_data)]
@@ -654,58 +718,36 @@
                 )
                 u0
             )
-            (begin
-                (try! (contract-call? signer-manager claim-rewards
+            (match (contract-call? signer-manager claim-rewards
                     (match bond-index
                         idx (list idx)
                         (list)
                     )
                     reward-cycle
-                ))
-                true
-            )
-            true
-        )
-        (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
-            claim-result
-            ;; paid: advance and record any L1 withdrawal for later settlement
-            (let ((withdrawal-request (get withdrawal-request claim-result)))
-                (advance-registration key registration)
-                (match withdrawal-request
-                    id (try! (append-pending-withdrawal key id))
-                    true
                 )
-                (print {
-                    topic: "process-reward-claim",
-                    staker: staker,
-                    signer-manager: (contract-of signer-manager),
-                    reward-cycle: reward-cycle,
-                    claim-distribution: claim-distribution,
-                    bond-index: bond-index,
-                    earned: (get earned claim-result),
-                    claim-error: none,
-                    withdrawal-request: withdrawal-request,
-                })
-                (ok withdrawal-request)
+                pull-ok (claim-staker-and-advance staker signer-manager key registration
+                    reward-cycle claim-distribution bond-index
+                )
+                ;; pull failed: advance anyway so a broken or hostile signer-manager
+                ;; cannot stall this registration indefinitely.
+                pull-err (begin
+                    (advance-registration key registration)
+                    (print {
+                        topic: "process-reward-claim",
+                        staker: staker,
+                        signer-manager: signer-manager-contract,
+                        reward-cycle: reward-cycle,
+                        claim-distribution: claim-distribution,
+                        bond-index: bond-index,
+                        earned: u0,
+                        claim-error: (some pull-err),
+                        withdrawal-request: none,
+                    })
+                    (ok none)
+                )
             )
-            err-code
-            ;; not paid -- empty cycle, a zero share, or a claim failure. Advance
-            ;; past it regardless so a single staker's problem never stalls the
-            ;; registration or a batch; the error code rides in the event.
-            (begin
-                (advance-registration key registration)
-                (print {
-                    topic: "process-reward-claim",
-                    staker: staker,
-                    signer-manager: (contract-of signer-manager),
-                    reward-cycle: reward-cycle,
-                    claim-distribution: claim-distribution,
-                    bond-index: bond-index,
-                    earned: u0,
-                    claim-error: (some err-code),
-                    withdrawal-request: none,
-                })
-                (ok none)
+            (claim-staker-and-advance staker signer-manager key registration reward-cycle
+                claim-distribution bond-index
             )
         )
     )
@@ -754,10 +796,10 @@
 ;; Claim installments for the given `stakers`, each keyed with `signer-manager`.
 ;; Reads pox-5's current distribution cycle once and threads it through. Skips,
 ;; without aborting the batch, any staker with no registration under
-;; `signer-manager`, one not yet eligible, or one whose claim-rewards pull fails.
-;; One signer-manager per call, since the trait must be a single top-level
-;; argument; the keeper builds `stakers` from one signer-manager's group of
-;; `get-due-claims` rows. Returns the count claimed.
+;; `signer-manager` or one not yet eligible. Pull/claim failures still advance
+;; and count as claimed. One signer-manager per call, since the trait must be a
+;; single top-level argument; the keeper builds `stakers` from one
+;; signer-manager's group of `get-due-claims` rows. Returns the count claimed.
 (define-public (process-reward-claims
         (signer-manager <reward-claim-signer-manager-trait>)
         (stakers (list 100 principal))
@@ -873,7 +915,7 @@
             ))
         )
         ;; DUE_TICKS is the elided (list 100 uint) bounding the walk to at most
-        ;; DUE_PAGE_SIZE node visits per call.
+        ;; 100 node visits per call.
         (ok (get rows
             (fold due-settlements-step DUE_TICKS {
                 node: start,
