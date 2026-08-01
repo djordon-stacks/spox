@@ -139,7 +139,7 @@ export function distributionCycleToBurnHeight(cycle: bigint): bigint {
 
 /**
  * Mine until current-distribution-cycle > distCycle, so a registration whose
- * next-claim-distribution is `distCycle` becomes eligible (k < CD).
+ * next-claim-distribution is `distCycle` becomes pending (k < CD).
  */
 export function mineUntilPastDistribution(distCycle: bigint) {
   mineUntil(distributionCycleToBurnHeight(distCycle + 1n));
@@ -536,19 +536,19 @@ export function getRegistration(staker: string, signerManager: string) {
   ).result;
 }
 
-export function getDueClaims(cursor = Cl.none()) {
+export function getPendingClaims(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
     "reward-claim-registry",
-    "get-due-claims",
+    "get-pending-claims",
     [cursor],
     deployer,
   ).result;
 }
 
-export function getDueSettlements(cursor = Cl.none()) {
+export function getPendingSettlements(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
     "reward-claim-registry",
-    "get-due-settlements",
+    "get-pending-settlements",
     [cursor],
     deployer,
   ).result;

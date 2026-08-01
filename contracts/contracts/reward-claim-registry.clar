@@ -2,8 +2,6 @@
 
 ;; The longest STX lock in PoX-5 is 96 reward cycles, which equals 192 distribution cycles
 (define-constant MAX_DISTRIBUTION_CYCLES u192)
-;; The number of max rows returned per get-due-claims / get-due-settlements call
-(define-constant DUE_PAGE_SIZE u100)
 
 ;; No registration for this staker and signer-manager combination
 (define-constant ERR_NOT_REGISTERED (err u600))
@@ -24,11 +22,11 @@
 ;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
 
-;; A (list 100 uint) whose only job is to bound the get-due-claims /
-;; get-due-settlements folds to at most DUE_PAGE_SIZE (100) node visits per
-;; call. The element values are never read (the fold step ignores `tick`).
+;; A (list 100 uint) whose only job is to bound the get-pending-claims /
+;; get-pending-settlements folds to at most 100 node visits per call. The
+;; element values are never read (the fold step ignores `tick`).
 ;; @format-ignore
-(define-constant DUE_TICKS (list
+(define-constant PENDING_TICKS (list
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
@@ -40,12 +38,6 @@
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0
 ))
-
-;; The max rows a single get-due-claims / get-due-settlements call returns.
-;; Off-chain pagination compares a page's length to this to know if more remain.
-(define-read-only (get-page-size)
-    DUE_PAGE_SIZE
-)
 
 ;; default to allowing deployer to register as a pool
 (define-map admins
@@ -74,11 +66,12 @@
     {
         bond-index: (optional uint),
         remaining-cycles: uint,
-        ;; Next distribution cycle this registration will settle. Bonds step by 1
-        ;; normally, or jump to the first half of the next reward cycle when
-        ;; catching up past a finished cycle; STX-stake step is 2 (one claim per
-        ;; reward cycle). Eligible when this value is < current-distribution-cycle.
-        ;; Reward cycle to pull/claim is (/ next-claim-distribution u2).
+        ;; The next distribution cycle this registration will settle.
+        ;; Bondholders have this value increment by 1 whenever a claim is
+        ;; processed, while STX-only stakers increment by 2 whenever a
+        ;; claim is processed (one claim per reward cycle). A registrant is
+        ;; considered Pending when this value is less than the value of the
+        ;; current distribution cycle.
         next-claim-distribution: uint,
     }
 )
@@ -163,10 +156,9 @@
     )
 )
 
-;; Bond registrations step one distribution cycle at a time (two installments
-;; per reward cycle); STX-stake registrations step by two (one claim per
-;; reward cycle, after both halves have elapsed). Used to seed the first
-;; next-claim-distribution; live advances go through next-claim-after.
+;; Bond registrations step one distribution cycle at a time, or two
+;; installments per reward cycle, while STX-only stakers step by two, or
+;; one claim per reward cycle.
 (define-private (claim-step (bond-index (optional uint)))
     (if (is-some bond-index)
         u1
@@ -190,12 +182,12 @@
     (+ (* u2 start-reward-cycle) (- (claim-step bond-index) u1))
 )
 
-;; Next next-claim-distribution after settling `claim-distribution`.
-;; STX always advances by 2 (one claim per reward cycle). Bonds advance by 1
-;; normally, but when the claimed reward cycle is fully past
-;; (current-distribution-cycle > 2*R+1) jump to the first half of R+1 so a
-;; catch-up claim does not schedule a second installment for an already-finished
-;; reward cycle (pox-5 pays bonds once per reward cycle).
+;; Computes the next next-claim-distribution after processing a claim.
+;; STX-only stakers always advance by 2. Bondholders advance by 1,
+;; normally, but when the claimed reward cycle is fully past jump to the
+;; first half of the next reward cycle. This way a catch-up claim does not
+;; schedule a second installment for an already-finished reward cycle. 
+;;
 ;; #[allow(unchecked_data)]
 (define-private (next-claim-after
         (claim-distribution uint)
@@ -221,7 +213,7 @@
 )
 
 ;; --- Doubly-linked-list maintenance over registration-ll ---
-;; The list lets get-due-claims walk every live registration without a global
+;; The list lets get-pending-claims walk every live registration without a global
 ;; index. `registration-ll-head`/`-tail` bound the walk; each node stores its
 ;; prev/next key. Append is O(1) at the tail; remove splices in O(1). Both are
 ;; infallible and return bool.
@@ -229,6 +221,7 @@
 ;; Append `key` at the tail (it must not already be in the list). The nested
 ;; match on the neighbor read avoids a runtime panic: the entry is always
 ;; present (it is the current tail), and the false arm is unreachable.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (ll-append (key {
     staker: principal,
@@ -254,6 +247,7 @@
 
 ;; Splice `key` out of the list, fixing up its neighbors' links and the
 ;; head/tail vars. No-op if `key` isn't in the list.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (ll-remove (key {
     staker: principal,
@@ -283,9 +277,10 @@
 
 ;; --- Doubly-linked-list maintenance over pending-withdrawal-ll ---
 ;; Same shape as the registration list, but tracking only keys with at least
-;; one outstanding withdrawal so get-due-settlements can walk them directly.
+;; one outstanding withdrawal so get-pending-settlements can walk them directly.
 
 ;; Append `key` at the tail of the pending-withdrawal list.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (pending-ll-append (key {
     staker: principal,
@@ -308,6 +303,7 @@
 )
 
 ;; Splice `key` out of the pending-withdrawal list.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (pending-ll-remove (key {
     staker: principal,
@@ -339,10 +335,9 @@
     )
 )
 
-;; Returns true if this registration has budget left and its next claim
-;; distribution has fully elapsed (and been calculated):
-;; next-claim-distribution < current-distribution-cycle.
-(define-private (is-due
+;; Returns true if this registration has remaining cycles left and its next
+;; claim distribution is before the current distribution cycle.
+(define-private (is-pending
         (registration {
             remaining-cycles: uint,
             bond-index: (optional uint),
@@ -356,13 +351,16 @@
     )
 )
 
-;; The staker's active pox-5 position for `bond-index` (`none` = STX-only
-;; stake, `(some n)` = bond n), or `none` if there is no such active
-;; position. A staker has at most one active bond and one active STX stake
-;; at a time. Returns:
+;; The staker's active pox-5 position for `bond-index` (`none` means we are
+;; looking for an STX-only stake, while `(some n)` means we are looking for
+;; a specific bond), or `none` if there is no such active position. A
+;; staker has at most one active bond and one active STX stake at a time.
+;; Returns:
+;;
 ;;   signer             the signer-manager the position is under.
 ;;   first-reward-cycle the position's first reward cycle, used to seed
 ;;                      next-claim-distribution at registration.
+;;
 ;; Used only at registration; claims key off {staker, signer-manager}.
 (define-read-only (get-position
         (staker principal)
@@ -391,13 +389,13 @@
     )
 )
 
-;; Fold step for get-due-claims. From the current `node` it reads that
-;; registration, appends a row when it is due, and advances `node` to the
+;; Fold step for get-pending-claims. From the current `node` it reads that
+;; registration, appends a row when it is pending, and advances `node` to the
 ;; next linked-list entry. Once `node` is none (walked past the tail) it is a
 ;; no-op for the remaining ticks. `current-distribution-cycle` rides in the accumulator so
-;; the due check never re-reads it. `tick` is unused: the tick list only
+;; the pending check never re-reads it. `tick` is unused: the tick list only
 ;; bounds the number of iterations.
-(define-private (due-claims-step
+(define-private (pending-claims-step
         (tick_ uint)
         (acc {
             node: (optional {
@@ -423,7 +421,7 @@
             )))
             (match (map-get? registrations key)
                 registration
-                (if (is-due registration (get current-distribution-cycle acc))
+                (if (is-pending registration (get current-distribution-cycle acc))
                     (merge acc {
                         node: next-node,
                         rows: (default-to (get rows acc)
@@ -450,7 +448,7 @@
 )
 
 ;; The keeper's work list. Walks the registration linked list from `cursor`
-;; (or the head if none) and returns up to 100 registrations due this
+;; (or the head if none) and returns up to 100 registrations pending this
 ;; distribution cycle: remaining-cycles > 0 and next-claim-distribution <
 ;; current-distribution-cycle. Each row:
 ;;   signer-manager the registration's signer-manager, a plain principal.
@@ -459,7 +457,7 @@
 ;;   reward-cycle   floor(next-claim-distribution / 2), the pox-5 cycle to claim.
 ;; Paginate by passing the last row's {staker, signer-manager} as the next
 ;; `cursor`; done when a page comes back short.
-(define-read-only (get-due-claims (cursor (optional {
+(define-read-only (get-pending-claims (cursor (optional {
     staker: principal,
     signer-manager: principal,
 })))
@@ -474,11 +472,11 @@
                 (var-get registration-ll-head)
             ))
         )
-        ;; DUE_TICKS is the elided (list 100 uint) that bounds the walk to at
-        ;; most DUE_PAGE_SIZE node visits per call. `current-distribution-cycle`
-        ;; is read once here and threaded through the fold.
+        ;; PENDING_TICKS is the (list 100 uint) that bounds the walk to at
+        ;; most 100 node visits per call. `current-distribution-cycle` is
+        ;; read once here and threaded through the fold.
         (ok (get rows
-            (fold due-claims-step DUE_TICKS {
+            (fold pending-claims-step PENDING_TICKS {
                 node: start,
                 current-distribution-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
                 rows: (list),
@@ -559,7 +557,7 @@
 ;;                  Only the used portion is burned; any sub-fee remainder stays
 ;;                  with the caller, so the contract never custodies STX.
 ;; Schedule starts at reward cycle max(first-reward-cycle, current): the first
-;; claim is due once that cycle's covered distribution(s) have elapsed. If this
+;; claim becomes pending once that cycle's covered distribution(s) have elapsed. If this
 ;; {staker, signer-manager} is already registered, the bought claims are added
 ;; to its remaining-cycles instead. Fails if `fee` buys no claims. Returns
 ;; claims bought this call.
@@ -603,6 +601,7 @@
 ;; Bookkeeping only. Consume one installment: delete the registration at zero
 ;; remaining-cycles, otherwise decrement remaining-cycles and advance
 ;; next-claim-distribution via next-claim-after (bond catch-up aware).
+;;
 ;; #[allow(unchecked_data)]
 (define-private (advance-registration
         (key {
@@ -626,10 +625,8 @@
             (map-set registrations key
                 (merge registration {
                     remaining-cycles: (- (get remaining-cycles registration) u1),
-                    next-claim-distribution: (next-claim-after
-                        (get next-claim-distribution registration)
-                        (get bond-index registration)
-                        current-distribution-cycle
+                    next-claim-distribution: (next-claim-after (get next-claim-distribution registration)
+                        (get bond-index registration) current-distribution-cycle
                     ),
                 })
             )
@@ -641,6 +638,7 @@
 ;; Shared by process-reward-claim-impl after any claim-rewards pull (or when none
 ;; was needed). Always advances one installment whether claim-staker-rewards
 ;; pays or errors, so an untrusted signer-manager cannot stall the registration.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (claim-staker-and-advance
         (staker principal)
@@ -722,6 +720,7 @@
 ;;            anyway. The error code is surfaced in the print event.
 ;; The fee moved no STX (burned at registration); `claim-rewards` does move sBTC
 ;; from pox-5 into the signer-manager.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (process-reward-claim-impl
         (staker principal)
@@ -751,18 +750,20 @@
                 u0
             )
             (match (contract-call? signer-manager claim-rewards
-                    (match bond-index
-                        idx (list idx)
-                        (list)
-                    )
-                    reward-cycle
+                (match bond-index
+                    idx (list idx)
+                    (list)
                 )
-                pull-ok (claim-staker-and-advance staker signer-manager key registration
-                    reward-cycle claim-distribution bond-index current-distribution-cycle
+                reward-cycle
+            )
+                pull-ok
+                (claim-staker-and-advance staker signer-manager key registration reward-cycle
+                    claim-distribution bond-index current-distribution-cycle
                 )
                 ;; pull failed: advance anyway so a broken or hostile signer-manager
                 ;; cannot stall this registration indefinitely.
-                pull-err (begin
+                pull-err
+                (begin
                     (advance-registration key registration current-distribution-cycle)
                     (print {
                         topic: "process-reward-claim",
@@ -788,6 +789,7 @@
 ;; Bookkeeping only. Appends `request-id` to key's pending-withdrawals entry
 ;; (append + as-max-len? back to 192), erroring ERR_TOO_MANY_PENDING if full.
 ;; Splices key into pending-withdrawal-ll if this is its first pending item.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (append-pending-withdrawal
         (key {
@@ -812,9 +814,10 @@
 
 ;; Claim one installment for `staker` under `signer-manager`. Permissionless.
 ;; signer-manager must be passed as a trait (claim-staker-rewards / claim-rewards
-;; dispatch on it); the caller learns which from `get-due-claims`. Reads pox-5's
+;; dispatch on it); the caller learns which from `get-pending-claims`. Reads pox-5's
 ;; current distribution cycle and delegates to process-reward-claim-impl. Returns
 ;; the withdrawal request-id, if one was initiated.
+;;
 ;; #[allow(unchecked_data)]
 (define-public (process-reward-claim
         (staker principal)
@@ -828,10 +831,10 @@
 ;; Claim installments for the given `stakers`, each keyed with `signer-manager`.
 ;; Reads pox-5's current distribution cycle once and threads it through. Skips,
 ;; without aborting the batch, any staker with no registration under
-;; `signer-manager` or one not yet eligible. Pull/claim failures still advance
+;; `signer-manager` or one not yet pending. Pull/claim failures still advance
 ;; and count as claimed. One signer-manager per call, since the trait must be a
 ;; single top-level argument; the keeper builds `stakers` from one
-;; signer-manager's group of `get-due-claims` rows. Returns the count claimed.
+;; signer-manager's group of `get-pending-claims` rows. Returns the count claimed.
 (define-public (process-reward-claims
         (signer-manager <reward-claim-signer-manager-trait>)
         (stakers (list 100 principal))
@@ -848,6 +851,7 @@
 ;; Fold step for process-reward-claims: match each process-reward-claim-impl result so a
 ;; skip or failure doesn't abort the batch. Returns the count, not the
 ;; accumulator, which carries the trait and can't be returned.
+;;
 ;; #[allow(unchecked_data)]
 (define-private (count-claim
         (staker principal)
@@ -865,14 +869,15 @@
     )
 )
 
-;; Fold step for get-due-settlements. Reads the current node's pending
+;; Fold step for get-pending-settlements. Reads the current node's pending
 ;; request-ids, appends one row carrying the whole list, and advances `node`
 ;; to the next entry. Every node in pending-withdrawal-ll has a nonempty
 ;; pending-withdrawals entry (a node is spliced out when its list empties), so
 ;; no filtering is needed and one row is emitted per node. Once `node` is none
 ;; it is a no-op. `tick` is unused; it only bounds the iteration count.
+;;
 ;; #[allow(unchecked_data)]
-(define-private (due-settlements-step
+(define-private (pending-settlements-step
         (tick_ uint)
         (acc {
             node: (optional {
@@ -924,14 +929,14 @@
 ;;   staker, signer-manager  the registration key.
 ;;   request-ids             every sbtc-registry request-id awaiting settlement
 ;;                           for that key (up to 192).
-;; Every node in the list has a nonempty entry, so unlike get-due-claims there
+;; Every node in the list has a nonempty entry, so unlike get-pending-claims there
 ;; is no filtering: each node yields exactly one row, pagination is exact, and
 ;; a short page reliably means the tail was reached. Includes entries whether
 ;; or not their parent registration still exists. Paginate by passing the last
 ;; row's {staker, signer-manager} as the next `cursor`. Doesn't check status
 ;; itself -- the caller checks sbtc-registry per request-id before deciding
 ;; whether calling settle-pending-withdrawal is worth the gas.
-(define-read-only (get-due-settlements (cursor (optional {
+(define-read-only (get-pending-settlements (cursor (optional {
     staker: principal,
     signer-manager: principal,
 })))
@@ -946,10 +951,10 @@
                 (var-get pending-withdrawal-ll-head)
             ))
         )
-        ;; DUE_TICKS is the elided (list 100 uint) bounding the walk to at most
+        ;; PENDING_TICKS is the elided (list 100 uint) bounding the walk to at most
         ;; 100 node visits per call.
         (ok (get rows
-            (fold due-settlements-step DUE_TICKS {
+            (fold pending-settlements-step PENDING_TICKS {
                 node: start,
                 rows: (list),
             })
@@ -981,6 +986,7 @@
 ;; Either resolved case removes the request-id from pending-withdrawals (deleting
 ;; the entry and splicing out of pending-withdrawal-ll if that empties the list).
 ;; No STX moves. Returns whether it resolved (true) or was still pending (false).
+;;
 ;; #[allow(unchecked_data)]
 (define-private (settle-pending-withdrawal-impl
         (staker principal)
@@ -1041,6 +1047,7 @@
 ;; splicing out of pending-withdrawal-ll if the list goes empty. Permissionless;
 ;; the caller pays their own gas and receives nothing. Returns whether it
 ;; resolved (true) or was still pending (false).
+;;
 ;; #[allow(unchecked_data)]
 (define-public (settle-pending-withdrawal
         (staker principal)
@@ -1099,6 +1106,7 @@
 ;;; Admin functions
 
 ;; Update the allowed admin principal
+;;
 ;; #[allow(unchecked_data)]
 (define-public (update-admin
         (admin principal)
