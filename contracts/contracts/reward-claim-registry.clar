@@ -21,6 +21,8 @@
 (define-constant ERR_TOO_MANY_PENDING (err u606))
 ;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
+;; start-reward-cycle is before the position's first-reward-cycle
+(define-constant ERR_INVALID_START_REWARD_CYCLE (err u608))
 
 ;; A (list 100 uint) whose only job is to bound the get-pending-claims /
 ;; get-pending-settlements folds to at most 100 node visits per call. The
@@ -66,12 +68,14 @@
     {
         bond-index: (optional uint),
         remaining-cycles: uint,
+        ;; When true, advance by 2 distribution cycles (at most one claim per
+        ;; reward cycle, seeded on the second half). When false, advance by 1
+        ;; (up to two claims per reward cycle, seeded on the first half), with
+        ;; catch-up jumping to the next reward cycle's first half when the
+        ;; claimed cycle is fully past.
+        one-claim-per-reward-cycle: bool,
         ;; The next distribution cycle this registration will settle.
-        ;; Bondholders have this value increment by 1 whenever a claim is
-        ;; processed, while STX-only stakers increment by 2 whenever a
-        ;; claim is processed (one claim per reward cycle). A registrant is
-        ;; considered Pending when this value is less than the value of the
-        ;; current distribution cycle.
+        ;; Pending when this value is less than current-distribution-cycle.
         next-claim-distribution: uint,
     }
 )
@@ -146,55 +150,39 @@
         right
     )
 )
-(define-private (max-uint
-        (left uint)
-        (right uint)
-    )
-    (if (>= left right)
-        left
-        right
-    )
-)
 
-;; Bond registrations step one distribution cycle at a time, or two
-;; installments per reward cycle, while STX-only stakers step by two, or
-;; one claim per reward cycle.
-(define-private (claim-step (bond-index (optional uint)))
-    (if (is-some bond-index)
-        u1
+;; Step size in distribution cycles: 2 when claiming at most once per reward
+;; cycle, otherwise 1 (up to twice per reward cycle).
+(define-private (claim-step (one-claim-per-reward-cycle bool))
+    (if one-claim-per-reward-cycle
         u2
+        u1
     )
 )
 
 ;; First distribution cycle a registration covers for start reward-cycle.
-;;
-;; For bond holders: the first distribution is the first half of the
-;; start-reward-cycle.
-;;
-;; For non-bond holders: the first distribution is the second half of the
-;; start-reward-cycle.
+;; one-claim-per-reward-cycle: second half (2s+1). Else: first half (2s).
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (initial-next-claim-distribution
         (start-reward-cycle uint)
-        (bond-index (optional uint))
+        (one-claim-per-reward-cycle bool)
     )
-    (+ (* u2 start-reward-cycle) (- (claim-step bond-index) u1))
+    (+ (* u2 start-reward-cycle) (- (claim-step one-claim-per-reward-cycle) u1))
 )
 
-;; Computes the next next-claim-distribution after processing a claim.
-;; STX-only stakers always advance by 2. Bondholders advance by 1,
-;; normally, but when the claimed reward cycle is fully past jump to the
-;; first half of the next reward cycle. This way a catch-up claim does not
-;; schedule a second installment for an already-finished reward cycle. 
+;; Next next-claim-distribution after settling `claim-distribution`.
+;; one-claim-per-reward-cycle always advances by 2. Otherwise advance by 1,
+;; but when the claimed reward cycle is fully past
+;; (current-distribution-cycle > 2*R+1) jump to the first half of R+1.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (next-claim-after
         (claim-distribution uint)
-        (bond-index (optional uint))
+        (one-claim-per-reward-cycle bool)
         (current-distribution-cycle uint)
     )
-    (if (is-none bond-index)
+    (if one-claim-per-reward-cycle
         (+ claim-distribution u2)
         (let (
                 (reward-cycle (/ claim-distribution u2))
@@ -341,6 +329,7 @@
         (registration {
             remaining-cycles: uint,
             bond-index: (optional uint),
+            one-claim-per-reward-cycle: bool,
             next-claim-distribution: uint,
         })
         (current-distribution-cycle uint)
@@ -498,17 +487,20 @@
 
 ;; Bookkeeping only. Add `num-cycles` claims for {staker, signer}. If a
 ;; registration already exists it is topped up -- the bought cycles are added to
-;; its remaining-cycles and its schedule is left untouched (no re-validation, no
-;; second linked-list node). Otherwise the staker's current pox-5 position is
-;; looked up (bond preferred, else STX-only) and a fresh registration is created.
-;; next-claim-distribution starts at 2*start + step - 1 where
-;; start = max(first-reward-cycle, current reward cycle) and step is 1 (bond)
-;; or 2 (STX). Moves no STX -- the fee is burned by the caller
-;; (`register-for-claims`). Fails on a fresh registration if there is no
-;; position under `signer`, and always if `num-cycles` is zero.
+;; its remaining-cycles and its schedule / cadence flags are left untouched (no
+;; re-validation, no second linked-list node). Otherwise the staker's current
+;; pox-5 position is looked up (bond preferred, else STX-only) and a fresh
+;; registration is created. next-claim-distribution starts at
+;; 2*start-reward-cycle + step - 1 where step is 2 (one-claim-per-reward-cycle)
+;; or 1. Moves no STX -- the fee is burned by the caller
+;; (`register-for-claims`). Fails if there is no position under `signer`, if
+;; `start-reward-cycle` is before the position's first-reward-cycle, or if
+;; `num-cycles` is zero.
 (define-private (create-registration
         (staker principal)
         (signer principal)
+        (start-reward-cycle uint)
+        (one-claim-per-reward-cycle bool)
         (num-cycles uint)
     )
     (let ((key {
@@ -526,14 +518,18 @@
             (let (
                     (position (unwrap! (get-position staker) ERR_NO_CURRENT_POSITION))
                     (bond-index (get bond-index position))
-                    (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
-                    (start-reward (max-uint (get first-reward-cycle position) current-reward))
                 )
                 (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
+                (asserts! (>= start-reward-cycle (get first-reward-cycle position))
+                    ERR_INVALID_START_REWARD_CYCLE
+                )
                 (map-set registrations key {
                     bond-index: bond-index,
                     remaining-cycles: num-cycles,
-                    next-claim-distribution: (initial-next-claim-distribution start-reward bond-index),
+                    one-claim-per-reward-cycle: one-claim-per-reward-cycle,
+                    next-claim-distribution: (initial-next-claim-distribution start-reward-cycle
+                        one-claim-per-reward-cycle
+                    ),
                 })
                 (ll-append key)
                 (ok true)
@@ -547,20 +543,25 @@
 ;; must currently be staking in pox-5. The active bond-index (if any) is looked
 ;; up from pox-5 -- callers do not pass it.
 ;; Parameters:
-;;   staker         the principal being registered.
-;;   signer-manager with `staker`, the registration key; must be the signer
-;;                  pox-5 reports for the position, and every claim pulls from it.
-;;   fee            STX paid, buying min(fee / fee-per-cycle, 192) installments.
-;;                  Only the used portion is burned; any sub-fee remainder stays
-;;                  with the caller, so the contract never custodies STX.
-;; Schedule starts at reward cycle max(first-reward-cycle, current): the first
-;; claim becomes pending once that cycle's covered distribution(s) have elapsed. If this
+;;   staker                      the principal being registered.
+;;   signer-manager              with `staker`, the registration key; must be the
+;;                               signer pox-5 reports for the position.
+;;   start-reward-cycle          first reward cycle on the claim schedule; must
+;;                               be >= the position's first-reward-cycle.
+;;   one-claim-per-reward-cycle  true: at most one claim per reward cycle (step
+;;                               2, seed on second half). false: up to two
+;;                               (step 1, seed on first half, catch-up aware).
+;;   fee                         STX paid, buying min(fee / fee-per-cycle, 192)
+;;                               installments. Only the used portion is burned.
+;; Schedule seeds next-claim-distribution from `start-reward-cycle`. If this
 ;; {staker, signer-manager} is already registered, the bought claims are added
-;; to its remaining-cycles instead. Fails if `fee` buys no claims. Returns
-;; claims bought this call.
+;; to its remaining-cycles instead (schedule/cadence unchanged). Fails if `fee`
+;; buys no claims. Returns claims bought this call.
 (define-public (register-for-claims
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
+        (start-reward-cycle uint)
+        (one-claim-per-reward-cycle bool)
         (fee uint)
     )
     (let (
@@ -580,12 +581,16 @@
             )
             true
         )
-        (try! (create-registration staker (contract-of signer-manager) num-cycles))
+        (try! (create-registration staker (contract-of signer-manager) start-reward-cycle
+            one-claim-per-reward-cycle num-cycles
+        ))
         (print {
             topic: "register-for-claims",
             staker: staker,
             registrant: tx-sender,
             signer-manager: (contract-of signer-manager),
+            start-reward-cycle: start-reward-cycle,
+            one-claim-per-reward-cycle: one-claim-per-reward-cycle,
             num-cycles: num-cycles,
             burned: burned,
         })
@@ -595,7 +600,7 @@
 
 ;; Bookkeeping only. Consume one installment: delete the registration at zero
 ;; remaining-cycles, otherwise decrement remaining-cycles and advance
-;; next-claim-distribution via next-claim-after (bond catch-up aware).
+;; next-claim-distribution via next-claim-after (cadence / catch-up aware).
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (advance-registration
@@ -606,6 +611,7 @@
         (registration {
             bond-index: (optional uint),
             remaining-cycles: uint,
+            one-claim-per-reward-cycle: bool,
             next-claim-distribution: uint,
         })
         (current-distribution-cycle uint)
@@ -621,7 +627,8 @@
                 (merge registration {
                     remaining-cycles: (- (get remaining-cycles registration) u1),
                     next-claim-distribution: (next-claim-after (get next-claim-distribution registration)
-                        (get bond-index registration) current-distribution-cycle
+                        (get one-claim-per-reward-cycle registration)
+                        current-distribution-cycle
                     ),
                 })
             )
@@ -645,6 +652,7 @@
         (registration {
             bond-index: (optional uint),
             remaining-cycles: uint,
+            one-claim-per-reward-cycle: bool,
             next-claim-distribution: uint,
         })
         (reward-cycle uint)

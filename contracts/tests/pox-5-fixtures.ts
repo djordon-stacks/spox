@@ -68,6 +68,7 @@ export const ERR_ZERO_FEE = 604n;
 export const ERR_ALREADY_CLAIMED = 605n;
 export const ERR_TOO_MANY_PENDING = 606n;
 export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 607n;
+export const ERR_INVALID_START_REWARD_CYCLE = 608n;
 
 /** reward-claim-registry's default fee-per-sweep. */
 export const FEE_PER_CLAIM = 100_000n;
@@ -147,10 +148,13 @@ export function mineUntilPastDistribution(distCycle: bigint) {
 
 /**
  * Initial next-claim-distribution for start reward-cycle `s`:
- * bond (step 1) -> 2s, STX (step 2) -> 2s+1.
+ * oneClaimPerRewardCycle -> 2s+1 (step 2); else -> 2s (step 1).
  */
-export function initialNextClaimDistribution(startRewardCycle: bigint, isBond: boolean): bigint {
-  const step = isBond ? 1n : 2n;
+export function initialNextClaimDistribution(
+  startRewardCycle: bigint,
+  oneClaimPerRewardCycle: boolean,
+): bigint {
+  const step = oneClaimPerRewardCycle ? 2n : 1n;
   return 2n * startRewardCycle + step - 1n;
 }
 
@@ -504,11 +508,19 @@ export function registerForClaims(
   fee: bigint,
   sender: string,
   signerManager: string,
+  startRewardCycle: bigint,
+  oneClaimPerRewardCycle: boolean,
 ) {
   return simnet.callPublicFn(
     "reward-claim-registry",
     "register-for-claims",
-    [Cl.principal(staker), Cl.principal(signerManager), Cl.uint(fee)],
+    [
+      Cl.principal(staker),
+      Cl.principal(signerManager),
+      Cl.uint(startRewardCycle),
+      Cl.bool(oneClaimPerRewardCycle),
+      Cl.uint(fee),
+    ],
     sender,
   );
 }
