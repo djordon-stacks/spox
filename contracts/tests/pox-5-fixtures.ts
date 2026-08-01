@@ -30,6 +30,7 @@ export const wallet3 = accounts.get("wallet_3")!;
 export const wallet4 = accounts.get("wallet_4")!;
 
 export const SIGNER_MANAGER = `${deployer}.signer-manager`;
+export const MOCK_SIGNER_MANAGER = `${deployer}.mock-signer-manager`;
 export const SWEEP_REGISTRY = `${deployer}.reward-claim-registry`;
 export const SBTC_TOKEN =
   "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
@@ -55,6 +56,8 @@ const CHAIN_ID = 2147483648;
 
 // The signer-manager's signer key. Any valid secp256k1 private key works.
 export const SIGNER_PRIVATE_KEY = "a".repeat(63) + "1";
+/** Distinct key for mock-signer-manager so both can be registered in one simnet. */
+export const MOCK_SIGNER_PRIVATE_KEY = "b".repeat(63) + "1";
 
 // reward-claim-registry error codes
 export const ERR_NOT_REGISTERED = 600n;
@@ -245,6 +248,66 @@ export function registerSignerManager(privateKey: string) {
       Cl.uint(authId),
       Cl.bufferFromHex(signerSig),
     ],
+    deployer,
+  );
+}
+
+/**
+ * Register mock-signer-manager with pox-5 so tests can stake under it and drive
+ * claim-rewards / claim-staker-rewards error injection.
+ */
+export function registerMockSignerManager(privateKey = MOCK_SIGNER_PRIVATE_KEY) {
+  const authId = authIdCounter++;
+  const signerKey = compressPublicKey(privateKeyToPublic(privateKey));
+  const signerSig = signSignerKeyGrant(MOCK_SIGNER_MANAGER, authId, privateKey);
+  return simnet.callPublicFn(
+    "mock-signer-manager",
+    "register-self",
+    [
+      Cl.principal(MOCK_SIGNER_MANAGER),
+      Cl.bufferFromHex(signerKey),
+      Cl.uint(authId),
+      Cl.bufferFromHex(signerSig),
+    ],
+    deployer,
+  );
+}
+
+/** Stake `amount` uSTX under mock-signer-manager. */
+export function stakeForMock(staker: string, amount: bigint, numCycles: bigint) {
+  return simnet.callPublicFn(
+    POX5,
+    "stake",
+    [
+      Cl.principal(MOCK_SIGNER_MANAGER),
+      Cl.uint(amount),
+      Cl.uint(numCycles),
+      Cl.uint(burnHeight()),
+      Cl.none(),
+    ],
+    staker,
+  );
+}
+
+export function setMockClaimRewardsResult(shouldError: boolean, code = 1001n) {
+  return simnet.callPublicFn(
+    "mock-signer-manager",
+    "set-claim-rewards-result",
+    [Cl.bool(shouldError), Cl.uint(code)],
+    deployer,
+  );
+}
+
+export function setMockClaimStakerResult(
+  shouldError: boolean,
+  code = 1001n,
+  earned = 1000n,
+  wid: OptionalCV<UIntCV> = Cl.none(),
+) {
+  return simnet.callPublicFn(
+    "mock-signer-manager",
+    "set-claim-staker-result",
+    [Cl.bool(shouldError), Cl.uint(code), Cl.uint(earned), wid],
     deployer,
   );
 }

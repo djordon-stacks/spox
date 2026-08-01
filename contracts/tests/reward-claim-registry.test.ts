@@ -9,6 +9,7 @@ import {
   ERR_UNKNOWN_PENDING_WITHDRAWAL,
   ERR_ZERO_FEE,
   FEE_PER_CLAIM,
+  MOCK_SIGNER_MANAGER,
   SIGNER_MANAGER,
   SIGNER_PRIVATE_KEY,
   SIGNER_SET_MIN_USTX,
@@ -29,11 +30,15 @@ import {
   processRewardClaim,
   registerForBond,
   registerForClaims,
+  registerMockSignerManager,
   registerSignerManager,
   rejectWithdrawal,
   sbtcBalance,
+  setMockClaimRewardsResult,
+  setMockClaimStakerResult,
   setupBond,
   stakeFor,
+  stakeForMock,
   stakeWithPoxAddr,
   stxBalance,
   wallet1,
@@ -704,5 +709,204 @@ describe("L1 withdrawal path + settlements", () => {
     );
     expect(result).toBeOk(Cl.uint(1));
     expect(getDueSettlements()).toBeOk(Cl.list([]));
+  });
+});
+
+// Schedule / advance invariants. Several STX boundary cases are already
+// covered above; this suite tests catch-up, bond cadence, the desired
+// past-cycle bond skip, and mock SM error advance.
+describe("claim schedule invariants", () => {
+  describe("STX: catch-up and at-most-once per reward cycle", () => {
+    beforeEach(() => {
+      initPox5();
+      registerSignerManager(SIGNER_PRIVATE_KEY);
+      stakeFor(wallet1, SIGNER_SET_MIN_USTX, 6n);
+    });
+
+    it("can process multiple claims back-to-back when many distributions are past", () => {
+      registerForClaims(wallet1, 5n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+      // Seed next=3; mine until CD > 7 so reward cycles 1, 2, and 3 are all claimable
+      // without further mining between claims.
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST + 4n); // past dist 7
+      expect(currentDistributionCycle()).toBeGreaterThan(STX_FIRST_CLAIM_DIST + 4n);
+
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+        stxRegistration(4n, STX_FIRST_CLAIM_DIST + 2n),
+      );
+
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+        stxRegistration(3n, STX_FIRST_CLAIM_DIST + 4n),
+      );
+
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+        stxRegistration(2n, STX_FIRST_CLAIM_DIST + 6n),
+      );
+    });
+
+    it("after an STX claim, the same reward cycle cannot be claimed again", () => {
+      registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      const claimedRewardCycle = STX_START;
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+
+      const next = STX_FIRST_CLAIM_DIST + 2n;
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(2n, next));
+      // next still encodes a later reward cycle; immediate re-claim is blocked
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+        Cl.uint(ERR_ALREADY_CLAIMED),
+      );
+      expect(next / 2n).toBe(claimedRewardCycle + 1n);
+    });
+  });
+
+  describe("bond: once per distribution / at most twice per reward cycle", () => {
+    const BOND_INDEX = 0n;
+
+    beforeEach(() => {
+      initPox5();
+      registerSignerManager(SIGNER_PRIVATE_KEY);
+      setupBond(BOND_INDEX, [wallet1], 100_000_000n);
+      registerForBond(wallet1, BOND_INDEX, 5_000_000n);
+    });
+
+    it("claims at most once per distribution cycle and twice across one reward cycle", () => {
+      const start = bondPeriodToRewardCycle(BOND_INDEX);
+      const firstHalf = initialNextClaimDistribution(start, true); // 2*start
+      const secondHalf = firstHalf + 1n;
+      const bond = Cl.some(Cl.uint(BOND_INDEX));
+
+      registerForClaims(
+        wallet1,
+        4n * FEE_PER_CLAIM,
+        wallet1,
+        SIGNER_MANAGER,
+        bond,
+      );
+      mineUntilPastDistribution(firstHalf);
+
+      expect(getDueClaims()).toBeOk(Cl.list([dueRow(wallet1, start, bond)]));
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+        Cl.tuple({
+          "bond-index": bond,
+          "remaining-cycles": Cl.uint(3),
+          "next-claim-distribution": Cl.uint(secondHalf),
+        }),
+      );
+      // same distribution: not due again until CD advances
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+        Cl.uint(ERR_ALREADY_CLAIMED),
+      );
+
+      expect(getDueClaims()).toBeOk(Cl.list([]));
+
+      mineUntilPastDistribution(secondHalf);
+      expect(getDueClaims()).toBeOk(Cl.list([dueRow(wallet1, start, bond)]));
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+        Cl.tuple({
+          "bond-index": bond,
+          "remaining-cycles": Cl.uint(2),
+          "next-claim-distribution": Cl.uint(secondHalf + 1n),
+        }),
+      );
+      // two installments consumed for reward cycle `start`; next targets the following cycle
+      expect((secondHalf + 1n) / 2n).toBe(start + 1n);
+    });
+
+    // Desired: when both halves of a reward cycle are already past, one claim
+    // should settle that whole cycle (advance next by 2). Not implemented yet.
+    it.fails(
+      "when the due distribution is in a fully past reward cycle, claims only once for that cycle",
+      () => {
+        const start = bondPeriodToRewardCycle(BOND_INDEX);
+        const firstHalf = initialNextClaimDistribution(start, true);
+        const secondHalf = firstHalf + 1n;
+        const nextCycleFirstHalf = firstHalf + 2n;
+        const bond = Cl.some(Cl.uint(BOND_INDEX));
+
+        registerForClaims(
+          wallet1,
+          4n * FEE_PER_CLAIM,
+          wallet1,
+          SIGNER_MANAGER,
+          bond,
+        );
+        // Leave both halves of `start` in the past before the first claim.
+        mineUntilPastDistribution(secondHalf);
+        expect(currentDistributionCycle()).toBeGreaterThan(secondHalf);
+        expect(currentRewardCycle()).toBeGreaterThan(start);
+
+        expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+        // Wanted: skip the second half of the already-finished reward cycle.
+        expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+          Cl.tuple({
+            "bond-index": bond,
+            "remaining-cycles": Cl.uint(3),
+            "next-claim-distribution": Cl.uint(nextCycleFirstHalf),
+          }),
+        );
+        expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+          Cl.uint(ERR_ALREADY_CLAIMED),
+        );
+      },
+    );
+  });
+
+  describe("signer-manager errors still advance remaining-cycles", () => {
+    beforeEach(() => {
+      initPox5();
+      registerMockSignerManager();
+      stakeForMock(wallet1, SIGNER_SET_MIN_USTX, 4n);
+    });
+
+    it("decrements when claim-rewards errors (get-earned > 0 pull path)", () => {
+      fundAndCalculateRewards(2000n, 1n);
+      expect(getEarned(MOCK_SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
+
+      setMockClaimRewardsResult(true, 4242n);
+      registerForClaims(
+        wallet1,
+        3n * FEE_PER_CLAIM,
+        wallet1,
+        MOCK_SIGNER_MANAGER,
+        Cl.none(),
+      );
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
+        stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+      );
+      expect(processRewardClaim(wallet1, wallet1, MOCK_SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
+        stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
+      );
+      // pull did not succeed, so pox-5 still shows unpulled earned
+      expect(getEarned(MOCK_SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
+    });
+
+    it("decrements when claim-staker-rewards errors", () => {
+      setMockClaimStakerResult(true, 4242n);
+      registerForClaims(
+        wallet1,
+        3n * FEE_PER_CLAIM,
+        wallet1,
+        MOCK_SIGNER_MANAGER,
+        Cl.none(),
+      );
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      // No funding => get-earned == 0, so the registry skips claim-rewards and
+      // hits claim-staker-rewards, which we force to err.
+      expect(getEarned(MOCK_SIGNER_MANAGER, 1n, Cl.none())).toBe(0n);
+      expect(processRewardClaim(wallet1, wallet1, MOCK_SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
+        stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
+      );
+    });
   });
 });
