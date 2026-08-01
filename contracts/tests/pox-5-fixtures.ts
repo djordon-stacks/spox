@@ -504,12 +504,11 @@ export function registerForClaims(
   fee: bigint,
   sender: string,
   signerManager: string,
-  bondIndex: OptionalCV<UIntCV>,
 ) {
   return simnet.callPublicFn(
     "reward-claim-registry",
     "register-for-claims",
-    [Cl.principal(staker), Cl.principal(signerManager), bondIndex, Cl.uint(fee)],
+    [Cl.principal(staker), Cl.principal(signerManager), Cl.uint(fee)],
     sender,
   );
 }

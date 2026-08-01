@@ -351,38 +351,35 @@
     )
 )
 
-;; The staker's active pox-5 position for `bond-index` (`none` means we are
-;; looking for an STX-only stake, while `(some n)` means we are looking for
-;; a specific bond), or `none` if there is no such active position. A
+;; Get the staker's active pox-5 position, or `none` if they have neither
+;; an active bond nor an active STX-only stake. Prefers a live bond
+;; membership when present; otherwise falls back to STX-only staker-info. A
 ;; staker has at most one active bond and one active STX stake at a time.
 ;; Returns:
 ;;
 ;;   signer             the signer-manager the position is under.
 ;;   first-reward-cycle the position's first reward cycle, used to seed
 ;;                      next-claim-distribution at registration.
+;;   bond-index         (some n) for a bond position, none for STX-only.
 ;;
 ;; Used only at registration; claims key off {staker, signer-manager}.
-(define-read-only (get-position
-        (staker principal)
-        (bond-index (optional uint))
-    )
-    (match bond-index
-        idx (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-membership staker)
-            membership (if (is-eq (get bond-index membership) idx)
-                (some {
-                    signer: (get signer membership),
-                    first-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle
-                        idx
-                    ),
-                })
-                none
-            )
-            none
-        )
+(define-read-only (get-position (staker principal))
+    (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-membership staker)
+        membership
+        ;; A bond membership was found
+        (some {
+            signer: (get signer membership),
+            first-reward-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle
+                (get bond-index membership)
+            ),
+            bond-index: (some (get bond-index membership)),
+        })
+        ;; No bond membership was found, look for an STX-only stake
         (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-staker-info staker)
             info (some {
                 signer: (get signer info),
                 first-reward-cycle: (get first-reward-cycle info),
+                bond-index: none,
             })
             none
         )
@@ -502,16 +499,16 @@
 ;; Bookkeeping only. Add `num-cycles` claims for {staker, signer}. If a
 ;; registration already exists it is topped up -- the bought cycles are added to
 ;; its remaining-cycles and its schedule is left untouched (no re-validation, no
-;; second linked-list node). Otherwise the staker's current position is validated
-;; and a fresh registration is created. next-claim-distribution starts at
-;; 2*start + step - 1 where start = max(first-reward-cycle, current reward cycle)
-;; and step is 1 (bond) or 2 (STX). Moves no STX -- the fee is burned by the
-;; caller (`register-for-claims`). Fails on a fresh registration if the position
-;; isn't under `signer`, and always if `num-cycles` is zero.
+;; second linked-list node). Otherwise the staker's current pox-5 position is
+;; looked up (bond preferred, else STX-only) and a fresh registration is created.
+;; next-claim-distribution starts at 2*start + step - 1 where
+;; start = max(first-reward-cycle, current reward cycle) and step is 1 (bond)
+;; or 2 (STX). Moves no STX -- the fee is burned by the caller
+;; (`register-for-claims`). Fails on a fresh registration if there is no
+;; position under `signer`, and always if `num-cycles` is zero.
 (define-private (create-registration
         (staker principal)
         (signer principal)
-        (bond-index (optional uint))
         (num-cycles uint)
     )
     (let ((key {
@@ -525,9 +522,10 @@
             (ok (map-set registrations key
                 (merge existing { remaining-cycles: (+ (get remaining-cycles existing) num-cycles) })
             ))
-            ;; new: validate the staker's current position, then create
+            ;; new: look up the staker's current position, then create
             (let (
-                    (position (unwrap! (get-position staker bond-index) ERR_NO_CURRENT_POSITION))
+                    (position (unwrap! (get-position staker) ERR_NO_CURRENT_POSITION))
+                    (bond-index (get bond-index position))
                     (current-reward (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-pox-reward-cycle))
                     (start-reward (max-uint (get first-reward-cycle position) current-reward))
                 )
@@ -546,13 +544,12 @@
 
 ;; Register a staker for automated reward claims. Permissionless: `tx-sender`
 ;; pays `fee` from their own account and may register any staker; the staker
-;; must currently be staking in pox-5.
+;; must currently be staking in pox-5. The active bond-index (if any) is looked
+;; up from pox-5 -- callers do not pass it.
 ;; Parameters:
 ;;   staker         the principal being registered.
 ;;   signer-manager with `staker`, the registration key; must be the signer
 ;;                  pox-5 reports for the position, and every claim pulls from it.
-;;   bond-index     none for an STX stake (one claim per reward cycle), (some n)
-;;                  for bond n (one claim per distribution cycle).
 ;;   fee            STX paid, buying min(fee / fee-per-cycle, 192) installments.
 ;;                  Only the used portion is burned; any sub-fee remainder stays
 ;;                  with the caller, so the contract never custodies STX.
@@ -564,7 +561,6 @@
 (define-public (register-for-claims
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
-        (bond-index (optional uint))
         (fee uint)
     )
     (let (
@@ -584,13 +580,12 @@
             )
             true
         )
-        (try! (create-registration staker (contract-of signer-manager) bond-index num-cycles))
+        (try! (create-registration staker (contract-of signer-manager) num-cycles))
         (print {
             topic: "register-for-claims",
             staker: staker,
             registrant: tx-sender,
             signer-manager: (contract-of signer-manager),
-            bond-index: bond-index,
             num-cycles: num-cycles,
             burned: burned,
         })

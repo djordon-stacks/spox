@@ -97,22 +97,10 @@ function settlement(staker: string, requestIds: bigint[]) {
 
 /** Register an STX-stake position and mine until its first claim is pending. */
 function registerStxAndAdvance(staker: string, fee: bigint, sender = staker) {
-  const result = registerForClaims(staker, fee, sender, SIGNER_MANAGER, Cl.none());
+  const result = registerForClaims(staker, fee, sender, SIGNER_MANAGER);
   mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
   return result;
 }
-
-describe("get-page-size", () => {
-  it("returns the pagination cap", () => {
-    const { result } = simnet.callReadOnlyFn(
-      "reward-claim-registry",
-      "get-page-size",
-      [],
-      deployer,
-    );
-    expect(result).toBeUint(100);
-  });
-});
 
 describe("admin", () => {
   it("deployer starts as admin", () => {
@@ -203,7 +191,7 @@ describe("register-for-claims", () => {
   });
 
   it("registers a real staking position and returns claims bought", () => {
-    const { result } = registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    const { result } = registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.uint(3));
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(3n, STX_FIRST_CLAIM_DIST),
@@ -212,13 +200,13 @@ describe("register-for-claims", () => {
 
   it("burns exactly the used portion of the fee", () => {
     const before = stxBalance(wallet1);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM + FEE_PER_CLAIM / 2n, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM + FEE_PER_CLAIM / 2n, wallet1, SIGNER_MANAGER);
     expect(before - stxBalance(wallet1)).toBe(3n * FEE_PER_CLAIM);
   });
 
   it("burns nothing when an admin registers", () => {
     const before = stxBalance(deployer);
-    const { result } = registerForClaims(wallet1, 3n * FEE_PER_CLAIM, deployer, SIGNER_MANAGER, Cl.none());
+    const { result } = registerForClaims(wallet1, 3n * FEE_PER_CLAIM, deployer, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.uint(3));
     expect(stxBalance(deployer)).toBe(before);
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
@@ -228,32 +216,32 @@ describe("register-for-claims", () => {
 
   it("caps claims bought at MAX_DISTRIBUTION_CYCLES (192)", () => {
     const before = stxBalance(wallet1);
-    const { result } = registerForClaims(wallet1, 500n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    const { result } = registerForClaims(wallet1, 500n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.uint(192));
     expect(before - stxBalance(wallet1)).toBe(192n * FEE_PER_CLAIM);
   });
 
   it("rejects a fee too small to buy a single claim", () => {
-    expect(registerForClaims(wallet1, FEE_PER_CLAIM - 1n, wallet1, SIGNER_MANAGER, Cl.none()).result).toBeErr(
+    expect(registerForClaims(wallet1, FEE_PER_CLAIM - 1n, wallet1, SIGNER_MANAGER).result).toBeErr(
       Cl.uint(ERR_INSUFFICIENT_FEE),
     );
   });
 
   it("rejects a staker with no pox-5 position", () => {
-    expect(registerForClaims(wallet3, FEE_PER_CLAIM, wallet3, SIGNER_MANAGER, Cl.none()).result).toBeErr(
+    expect(registerForClaims(wallet3, FEE_PER_CLAIM, wallet3, SIGNER_MANAGER).result).toBeErr(
       Cl.uint(ERR_NO_CURRENT_POSITION),
     );
 
     stakeFor(wallet3, SIGNER_SET_MIN_USTX, 2n);
-    const { result } = registerForClaims(wallet3, FEE_PER_CLAIM, wallet3, SIGNER_MANAGER, Cl.none());
+    const { result } = registerForClaims(wallet3, FEE_PER_CLAIM, wallet3, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.uint(1));
   });
 
   it("tops up an existing registration instead of erroring on a duplicate", () => {
-    const first = registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    const first = registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(first.result).toBeOk(Cl.uint(1));
 
-    const second = registerForClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    const second = registerForClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(second.result).toBeOk(Cl.uint(2));
 
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
@@ -263,7 +251,7 @@ describe("register-for-claims", () => {
 
   it("is permissionless: a third party can register and pay for a staker", () => {
     const before = stxBalance(wallet2);
-    const { result } = registerForClaims(wallet1, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
+    const { result } = registerForClaims(wallet1, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.uint(1));
     expect(before - stxBalance(wallet2)).toBe(FEE_PER_CLAIM);
 
@@ -274,7 +262,7 @@ describe("register-for-claims", () => {
   });
 
   it("is not pending until next-claim-distribution has elapsed", () => {
-    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(getPendingClaims()).toBeOk(Cl.list([]));
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
@@ -297,7 +285,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
   });
 
   it("seeds next-claim-distribution on the second half of a reward cycle (odd)", () => {
-    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(STX_FIRST_CLAIM_DIST % 2n).toBe(1n);
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(1n, STX_FIRST_CLAIM_DIST),
@@ -310,7 +298,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
     // fundAndClaimSignerRewards(cycle 1) lands at burn 150 -> CD=3, RC=1
     // (second half of reward cycle 1). Registering here seeds next=3.
     fundAndClaimSignerRewards(2000n, 1n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
 
     expect(currentDistributionCycle()).toBe(STX_FIRST_CLAIM_DIST); // 3
     expect(currentRewardCycle()).toBe(STX_START); // 1
@@ -331,7 +319,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
 
   it("becomes pending only once CD advances past next (current reward cycle > claim's)", () => {
     fundAndClaimSignerRewards(2000n, 1n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(currentDistributionCycle()).toBe(STX_FIRST_CLAIM_DIST);
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
       Cl.uint(ERR_ALREADY_CLAIMED),
@@ -354,7 +342,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
 
   it("after a claim, the next second-half target is again blocked until that cycle ends", () => {
     fundAndClaimSignerRewards(2000n, 1n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
 
@@ -398,8 +386,8 @@ describe("get-pending-claims", () => {
 
   it("walks multiple registrations in insertion order", () => {
     stakeFor(wallet2, SIGNER_SET_MIN_USTX, 2n);
-    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
+    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getPendingClaims()).toBeOk(
       Cl.list([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]),
@@ -408,8 +396,8 @@ describe("get-pending-claims", () => {
 
   it("drops a registration from the pending list once it is claimed", () => {
     stakeFor(wallet2, SIGNER_SET_MIN_USTX, 2n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
+    registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
     expect(getPendingClaims()).toBeOk(
@@ -438,7 +426,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
 
   it("pays the staker its earned sBTC and decrements the registration", () => {
     fundAndClaimSignerRewards(2000n, 1n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
     expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
@@ -463,7 +451,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
 
   it("pulls claim-rewards itself when the signer-manager hasn't, then pays", () => {
     fundAndCalculateRewards(2000n, 1n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
 
@@ -516,8 +504,8 @@ describe("process-reward-claims (batch)", () => {
 
   it("claims multiple stakers and returns the count", () => {
     fundAndClaimSignerRewards(2000n, 1n);
-    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
+    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
     expect(getPendingClaims()).toBeOk(
@@ -536,8 +524,8 @@ describe("process-reward-claims (batch)", () => {
 
   it("self-pulls once for the batch when claim-rewards wasn't called", () => {
     fundAndCalculateRewards(2000n, 1n);
-    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
-    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
+    registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
 
@@ -588,13 +576,14 @@ describe("bond path", () => {
     const { result } = simnet.callReadOnlyFn(
       "reward-claim-registry",
       "get-position",
-      [Cl.principal(wallet1), Cl.some(Cl.uint(BOND_INDEX))],
+      [Cl.principal(wallet1)],
       deployer,
     );
     expect(result).toBeSome(
       Cl.tuple({
         signer: Cl.principal(SIGNER_MANAGER),
         "first-reward-cycle": Cl.uint(bondPeriodToRewardCycle(BOND_INDEX)),
+        "bond-index": Cl.some(Cl.uint(BOND_INDEX)),
       }),
     );
   });
@@ -602,13 +591,7 @@ describe("bond path", () => {
   it("registers a bond position and lists it as pending after its first half elapses", () => {
     const start = bondPeriodToRewardCycle(BOND_INDEX);
     const firstClaimDist = initialNextClaimDistribution(start, true);
-    const { result } = registerForClaims(
-      wallet1,
-      3n * FEE_PER_CLAIM,
-      wallet1,
-      SIGNER_MANAGER,
-      Cl.some(Cl.uint(BOND_INDEX)),
-    );
+    const { result } = registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.uint(3));
     expect(getPendingClaims()).toBeOk(Cl.list([]));
 
@@ -621,13 +604,7 @@ describe("bond path", () => {
   it("process-reward-claim drives the bond claim path (empty-cycle advance)", () => {
     const start = bondPeriodToRewardCycle(BOND_INDEX);
     const firstClaimDist = initialNextClaimDistribution(start, true);
-    registerForClaims(
-      wallet1,
-      3n * FEE_PER_CLAIM,
-      wallet1,
-      SIGNER_MANAGER,
-      Cl.some(Cl.uint(BOND_INDEX)),
-    );
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     mineUntilPastDistribution(firstClaimDist);
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
     expect(getPendingClaims()).toBeOk(Cl.list([]));
@@ -640,9 +617,16 @@ describe("bond path", () => {
     );
   });
 
-  it("a bond staker cannot also register the STX-stake position (none)", () => {
-    expect(registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none()).result).toBeErr(
-      Cl.uint(ERR_NO_CURRENT_POSITION),
+  it("register-for-claims looks up the bond-index from pox-5", () => {
+    expect(registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.uint(1));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      Cl.tuple({
+        "bond-index": Cl.some(Cl.uint(BOND_INDEX)),
+        "remaining-cycles": Cl.uint(1),
+        "next-claim-distribution": Cl.uint(
+          initialNextClaimDistribution(bondPeriodToRewardCycle(BOND_INDEX), true),
+        ),
+      }),
     );
   });
 });
@@ -653,7 +637,7 @@ describe("L1 withdrawal path + settlements", () => {
     registerSignerManager(SIGNER_PRIVATE_KEY);
     stakeWithPoxAddr(wallet1, SIGNER_SET_MIN_USTX, 2n, 100n);
     fundAndClaimSignerRewards(2000n, 1n);
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
   });
 
@@ -724,7 +708,7 @@ describe("claim schedule invariants", () => {
     });
 
     it("can process multiple claims back-to-back when many distributions are past", () => {
-      registerForClaims(wallet1, 5n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+      registerForClaims(wallet1, 5n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
       // Seed next=3; mine until CD > 7 so reward cycles 1, 2, and 3 are all claimable
       // without further mining between claims.
       mineUntilPastDistribution(STX_FIRST_CLAIM_DIST + 4n); // past dist 7
@@ -747,7 +731,7 @@ describe("claim schedule invariants", () => {
     });
 
     it("after an STX claim, the same reward cycle cannot be claimed again", () => {
-      registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, Cl.none());
+      registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
       mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
       const claimedRewardCycle = STX_START;
@@ -779,13 +763,7 @@ describe("claim schedule invariants", () => {
       const secondHalf = firstHalf + 1n;
       const bond = Cl.some(Cl.uint(BOND_INDEX));
 
-      registerForClaims(
-        wallet1,
-        4n * FEE_PER_CLAIM,
-        wallet1,
-        SIGNER_MANAGER,
-        bond,
-      );
+      registerForClaims(wallet1, 4n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
       mineUntilPastDistribution(firstHalf);
 
       expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, start, bond)]));
@@ -825,13 +803,7 @@ describe("claim schedule invariants", () => {
       const nextCycleFirstHalf = firstHalf + 2n;
       const bond = Cl.some(Cl.uint(BOND_INDEX));
 
-      registerForClaims(
-        wallet1,
-        4n * FEE_PER_CLAIM,
-        wallet1,
-        SIGNER_MANAGER,
-        bond,
-      );
+      registerForClaims(wallet1, 4n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER);
       // Leave both halves of `start` in the past before the first claim.
       mineUntilPastDistribution(secondHalf);
       expect(currentDistributionCycle()).toBeGreaterThan(secondHalf);
@@ -864,13 +836,7 @@ describe("claim schedule invariants", () => {
       expect(getEarned(MOCK_SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
 
       setMockClaimRewardsResult(true, 4242n);
-      registerForClaims(
-        wallet1,
-        3n * FEE_PER_CLAIM,
-        wallet1,
-        MOCK_SIGNER_MANAGER,
-        Cl.none(),
-      );
+      registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, MOCK_SIGNER_MANAGER);
       mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
       expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
@@ -886,13 +852,7 @@ describe("claim schedule invariants", () => {
 
     it("decrements when claim-staker-rewards errors", () => {
       setMockClaimStakerResult(true, 4242n);
-      registerForClaims(
-        wallet1,
-        3n * FEE_PER_CLAIM,
-        wallet1,
-        MOCK_SIGNER_MANAGER,
-        Cl.none(),
-      );
+      registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, MOCK_SIGNER_MANAGER);
       mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
       // No funding => get-earned == 0, so the registry skips claim-rewards and
