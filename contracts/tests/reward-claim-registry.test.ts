@@ -818,43 +818,38 @@ describe("claim schedule invariants", () => {
       expect((secondHalf + 1n) / 2n).toBe(start + 1n);
     });
 
-    // Desired: when both halves of a reward cycle are already past, one claim
-    // should settle that whole cycle (advance next by 2). Not implemented yet.
-    it.fails(
-      "when the due distribution is in a fully past reward cycle, claims only once for that cycle",
-      () => {
-        const start = bondPeriodToRewardCycle(BOND_INDEX);
-        const firstHalf = initialNextClaimDistribution(start, true);
-        const secondHalf = firstHalf + 1n;
-        const nextCycleFirstHalf = firstHalf + 2n;
-        const bond = Cl.some(Cl.uint(BOND_INDEX));
+    it("when the due distribution is in a fully past reward cycle, claims only once for that cycle", () => {
+      const start = bondPeriodToRewardCycle(BOND_INDEX);
+      const firstHalf = initialNextClaimDistribution(start, true);
+      const secondHalf = firstHalf + 1n;
+      const nextCycleFirstHalf = firstHalf + 2n;
+      const bond = Cl.some(Cl.uint(BOND_INDEX));
 
-        registerForClaims(
-          wallet1,
-          4n * FEE_PER_CLAIM,
-          wallet1,
-          SIGNER_MANAGER,
-          bond,
-        );
-        // Leave both halves of `start` in the past before the first claim.
-        mineUntilPastDistribution(secondHalf);
-        expect(currentDistributionCycle()).toBeGreaterThan(secondHalf);
-        expect(currentRewardCycle()).toBeGreaterThan(start);
+      registerForClaims(
+        wallet1,
+        4n * FEE_PER_CLAIM,
+        wallet1,
+        SIGNER_MANAGER,
+        bond,
+      );
+      // Leave both halves of `start` in the past before the first claim.
+      mineUntilPastDistribution(secondHalf);
+      expect(currentDistributionCycle()).toBeGreaterThan(secondHalf);
+      expect(currentRewardCycle()).toBeGreaterThan(start);
 
-        expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
-        // Wanted: skip the second half of the already-finished reward cycle.
-        expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
-          Cl.tuple({
-            "bond-index": bond,
-            "remaining-cycles": Cl.uint(3),
-            "next-claim-distribution": Cl.uint(nextCycleFirstHalf),
-          }),
-        );
-        expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
-          Cl.uint(ERR_ALREADY_CLAIMED),
-        );
-      },
-    );
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+      // Skip the second half of the already-finished reward cycle.
+      expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+        Cl.tuple({
+          "bond-index": bond,
+          "remaining-cycles": Cl.uint(3),
+          "next-claim-distribution": Cl.uint(nextCycleFirstHalf),
+        }),
+      );
+      expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
+        Cl.uint(ERR_ALREADY_CLAIMED),
+      );
+    });
   });
 
   describe("signer-manager errors still advance remaining-cycles", () => {

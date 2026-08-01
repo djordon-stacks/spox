@@ -74,9 +74,10 @@
     {
         bond-index: (optional uint),
         remaining-cycles: uint,
-        ;; Next distribution cycle this registration will settle. Bond step is 1
-        ;; (half-cycle installments); STX-stake step is 2 (one claim per reward
-        ;; cycle). Eligible when this value is < current-distribution-cycle.
+        ;; Next distribution cycle this registration will settle. Bonds step by 1
+        ;; normally, or jump to the first half of the next reward cycle when
+        ;; catching up past a finished cycle; STX-stake step is 2 (one claim per
+        ;; reward cycle). Eligible when this value is < current-distribution-cycle.
         ;; Reward cycle to pull/claim is (/ next-claim-distribution u2).
         next-claim-distribution: uint,
     }
@@ -164,7 +165,8 @@
 
 ;; Bond registrations step one distribution cycle at a time (two installments
 ;; per reward cycle); STX-stake registrations step by two (one claim per
-;; reward cycle, after both halves have elapsed).
+;; reward cycle, after both halves have elapsed). Used to seed the first
+;; next-claim-distribution; live advances go through next-claim-after.
 (define-private (claim-step (bond-index (optional uint)))
     (if (is-some bond-index)
         u1
@@ -173,7 +175,7 @@
 )
 
 ;; First distribution cycle a registration covers for start reward-cycle.
-;; 
+;;
 ;; For bond holders: the first distribution is the first half of the
 ;; start-reward-cycle.
 ;;
@@ -186,6 +188,32 @@
         (bond-index (optional uint))
     )
     (+ (* u2 start-reward-cycle) (- (claim-step bond-index) u1))
+)
+
+;; Next next-claim-distribution after settling `claim-distribution`.
+;; STX always advances by 2 (one claim per reward cycle). Bonds advance by 1
+;; normally, but when the claimed reward cycle is fully past
+;; (current-distribution-cycle > 2*R+1) jump to the first half of R+1 so a
+;; catch-up claim does not schedule a second installment for an already-finished
+;; reward cycle (pox-5 pays bonds once per reward cycle).
+;; #[allow(unchecked_data)]
+(define-private (next-claim-after
+        (claim-distribution uint)
+        (bond-index (optional uint))
+        (current-distribution-cycle uint)
+    )
+    (if (is-none bond-index)
+        (+ claim-distribution u2)
+        (let (
+                (reward-cycle (/ claim-distribution u2))
+                (second-half (+ (* u2 reward-cycle) u1))
+            )
+            (if (> current-distribution-cycle second-half)
+                (* u2 (+ reward-cycle u1))
+                (+ claim-distribution u1)
+            )
+        )
+    )
 )
 
 (define-read-only (get-fee-per-cycle)
@@ -574,7 +602,7 @@
 
 ;; Bookkeeping only. Consume one installment: delete the registration at zero
 ;; remaining-cycles, otherwise decrement remaining-cycles and advance
-;; next-claim-distribution by the bond/STX step.
+;; next-claim-distribution via next-claim-after (bond catch-up aware).
 ;; #[allow(unchecked_data)]
 (define-private (advance-registration
         (key {
@@ -586,6 +614,7 @@
             remaining-cycles: uint,
             next-claim-distribution: uint,
         })
+        (current-distribution-cycle uint)
     )
     (if (<= (get remaining-cycles registration) u1)
         ;; last claim: drop the registration entirely
@@ -597,8 +626,10 @@
             (map-set registrations key
                 (merge registration {
                     remaining-cycles: (- (get remaining-cycles registration) u1),
-                    next-claim-distribution: (+ (get next-claim-distribution registration)
-                        (claim-step (get bond-index registration))
+                    next-claim-distribution: (next-claim-after
+                        (get next-claim-distribution registration)
+                        (get bond-index registration)
+                        current-distribution-cycle
                     ),
                 })
             )
@@ -626,12 +657,13 @@
         (reward-cycle uint)
         (claim-distribution uint)
         (bond-index (optional uint))
+        (current-distribution-cycle uint)
     )
     (match (contract-call? signer-manager claim-staker-rewards staker reward-cycle bond-index)
         claim-result
         ;; paid: advance and record any L1 withdrawal for later settlement
         (let ((withdrawal-request (get withdrawal-request claim-result)))
-            (advance-registration key registration)
+            (advance-registration key registration current-distribution-cycle)
             (match withdrawal-request
                 id (try! (append-pending-withdrawal key id))
                 true
@@ -654,7 +686,7 @@
         ;; past it regardless so a single staker's problem never stalls the
         ;; registration or a batch; the error code rides in the event.
         (begin
-            (advance-registration key registration)
+            (advance-registration key registration current-distribution-cycle)
             (print {
                 topic: "process-reward-claim",
                 staker: staker,
@@ -726,12 +758,12 @@
                     reward-cycle
                 )
                 pull-ok (claim-staker-and-advance staker signer-manager key registration
-                    reward-cycle claim-distribution bond-index
+                    reward-cycle claim-distribution bond-index current-distribution-cycle
                 )
                 ;; pull failed: advance anyway so a broken or hostile signer-manager
                 ;; cannot stall this registration indefinitely.
                 pull-err (begin
-                    (advance-registration key registration)
+                    (advance-registration key registration current-distribution-cycle)
                     (print {
                         topic: "process-reward-claim",
                         staker: staker,
@@ -747,7 +779,7 @@
                 )
             )
             (claim-staker-and-advance staker signer-manager key registration reward-cycle
-                claim-distribution bond-index
+                claim-distribution bond-index current-distribution-cycle
             )
         )
     )
