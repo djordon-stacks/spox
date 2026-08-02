@@ -539,12 +539,10 @@
             ))
         )
         (if (> amount u0)
-            (begin
-                (try! (stx-transfer? amount tx-sender current-contract))
-                (ok amount)
-            )
-            (ok u0)
+            (try! (stx-transfer? amount tx-sender current-contract))
+            true
         )
+        (ok amount)
     )
 )
 
@@ -555,6 +553,8 @@
 ;; no STX; the fee is escrowed by the caller. Fails if a registration already
 ;; exists, if there is no position under signer, if start-reward-cycle is
 ;; before the position's first-reward-cycle, or if num-cycles is zero.
+;;
+;; #[allow(unchecked_data)]
 (define-private (create-registration
         (staker principal)
         (signer principal)
@@ -581,9 +581,7 @@
             bond-index: bond-index,
             remaining-cycles: num-cycles,
             one-claim-per-reward-cycle: one-claim-per-reward-cycle,
-            next-claim-distribution: (initial-next-claim-distribution start-reward-cycle
-                one-claim-per-reward-cycle
-            ),
+            next-claim-distribution: (initial-next-claim-distribution start-reward-cycle one-claim-per-reward-cycle),
             prepaid-ustx: prepaid-ustx,
         })
         (ll-append key)
@@ -673,8 +671,8 @@
             ERR_ALREADY_REGISTERED
         )
         (let ((escrowed (try! (escrow-registration-fee num-cycles))))
-            (try! (create-registration staker signer start-reward-cycle
-                one-claim-per-reward-cycle num-cycles escrowed
+            (try! (create-registration staker signer start-reward-cycle one-claim-per-reward-cycle
+                num-cycles escrowed
             ))
             (print {
                 topic: "register-for-claims",
@@ -776,28 +774,18 @@
         (asserts! (is-eq tx-sender staker) ERR_UNAUTHORIZED)
         (map-delete registrations key)
         (ll-remove key)
-        (if (> refund u0)
-            (begin
-                (try! (as-contract? ((with-stx refund))
-                    (try! (stx-transfer? refund tx-sender staker))
-                ))
-                (print {
-                    topic: "cancel-registration",
-                    staker: staker,
-                    signer-manager: signer-manager,
-                    refund: refund,
-                })
-                (ok refund)
+        (begin
+            (if (> refund u0)
+                (try! (as-contract? ((with-stx refund)) (try! (stx-transfer? refund tx-sender staker))))
+                true
             )
-            (begin
-                (print {
-                    topic: "cancel-registration",
-                    staker: staker,
-                    signer-manager: signer-manager,
-                    refund: refund,
-                })
-                (ok refund)
-            )
+            (print {
+                topic: "cancel-registration",
+                staker: staker,
+                signer-manager: signer-manager,
+                refund: refund,
+            })
+            (ok refund)
         )
     )
 )
@@ -832,9 +820,7 @@
         )
         (begin
             (if (> burn-amount u0)
-                (try! (as-contract? ((with-stx burn-amount))
-                    (try! (stx-burn? burn-amount tx-sender))
-                ))
+                (try! (as-contract? ((with-stx burn-amount)) (try! (stx-burn? burn-amount tx-sender))))
                 true
             )
             (if (<= remaining u1)
