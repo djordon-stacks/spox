@@ -570,9 +570,7 @@
             bond-index: bond-index,
             remaining-cycles: num-cycles,
             one-claim-per-reward-cycle: one-claim-per-reward-cycle,
-            next-claim-distribution: (initial-next-claim-distribution start-reward-cycle
-                one-claim-per-reward-cycle
-            ),
+            next-claim-distribution: (initial-next-claim-distribution start-reward-cycle one-claim-per-reward-cycle),
         })
         (ll-append key)
         (ok true)
@@ -646,15 +644,16 @@
         )
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         ;; Fail before burning if this key is already registered.
-        (asserts! (is-none (map-get? registrations {
-            staker: staker,
-            signer-manager: signer,
-        }))
+        (asserts!
+            (is-none (map-get? registrations {
+                staker: staker,
+                signer-manager: signer,
+            }))
             ERR_ALREADY_REGISTERED
         )
         (let ((burned (try! (burn-registration-fee num-cycles))))
-            (try! (create-registration staker signer start-reward-cycle
-                one-claim-per-reward-cycle num-cycles
+            (try! (create-registration staker signer start-reward-cycle one-claim-per-reward-cycle
+                num-cycles
             ))
             (print {
                 topic: "register-for-claims",
@@ -697,10 +696,11 @@
         )
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         ;; Fail before burning if this key is not registered.
-        (asserts! (is-some (map-get? registrations {
-            staker: staker,
-            signer-manager: signer-manager,
-        }))
+        (asserts!
+            (is-some (map-get? registrations {
+                staker: staker,
+                signer-manager: signer-manager,
+            }))
             ERR_NOT_REGISTERED
         )
         (let ((burned (try! (burn-registration-fee num-cycles))))
@@ -783,8 +783,7 @@
                 (merge registration {
                     remaining-cycles: (- (get remaining-cycles registration) u1),
                     next-claim-distribution: (next-claim-after (get next-claim-distribution registration)
-                        (get one-claim-per-reward-cycle registration)
-                        current-distribution-cycle
+                        (get one-claim-per-reward-cycle registration) current-distribution-cycle
                     ),
                 })
             )
