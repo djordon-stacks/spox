@@ -68,11 +68,11 @@
     {
         bond-index: (optional uint),
         remaining-cycles: uint,
-        ;; When true, advance by 2 distribution cycles (at most one claim per
-        ;; reward cycle, seeded on the second half). When false, advance by 1
-        ;; (up to two claims per reward cycle, seeded on the first half), with
-        ;; catch-up jumping to the next reward cycle's first half when the
-        ;; claimed cycle is fully past.
+        ;; When true, advance by two distribution cycles so at most one claim
+        ;; runs per reward cycle, seeded on the second half. When false,
+        ;; advance by one so up to two claims run per reward cycle, seeded on
+        ;; the first half, jumping to the next reward cycle's first half when
+        ;; catching up past a finished cycle.
         one-claim-per-reward-cycle: bool,
         ;; The next distribution cycle this registration will settle.
         ;; Pending when this value is less than current-distribution-cycle.
@@ -80,7 +80,16 @@
     }
 )
 
-;; The registration for {staker, signer-manager}, or none if not registered.
+;; Look up a registration by staker and signer-manager.
+;;
+;; Parameters:
+;;   staker          The staker principal on the registration key.
+;;   signer-manager  The signer-manager principal on the registration key.
+;;
+;; Returns:
+;;   The registration tuple if present, otherwise none. The tuple holds
+;;   bond-index, remaining-cycles, one-claim-per-reward-cycle, and
+;;   next-claim-distribution.
 (define-read-only (get-registration
         (staker principal)
         (signer-manager principal)
@@ -151,8 +160,8 @@
     )
 )
 
-;; Step size in distribution cycles: 2 when claiming at most once per reward
-;; cycle, otherwise 1 (up to twice per reward cycle).
+;; Step size in distribution cycles: two when claiming at most once per reward
+;; cycle, otherwise one so up to two claims per reward cycle are possible.
 (define-private (claim-step (one-claim-per-reward-cycle bool))
     (if one-claim-per-reward-cycle
         u2
@@ -160,8 +169,9 @@
     )
 )
 
-;; First distribution cycle a registration covers for start reward-cycle.
-;; one-claim-per-reward-cycle: second half (2s+1). Else: first half (2s).
+;; First distribution cycle a registration covers for a start reward cycle.
+;; When one-claim-per-reward-cycle is true, seed on the second half of that
+;; reward cycle. Otherwise seed on the first half.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (initial-next-claim-distribution
@@ -171,10 +181,11 @@
     (+ (* u2 start-reward-cycle) (- (claim-step one-claim-per-reward-cycle) u1))
 )
 
-;; Next next-claim-distribution after settling `claim-distribution`.
-;; one-claim-per-reward-cycle always advances by 2. Otherwise advance by 1,
-;; but when the claimed reward cycle is fully past
-;; (current-distribution-cycle > 2*R+1) jump to the first half of R+1.
+;; Compute the next next-claim-distribution after settling claim-distribution.
+;; When one-claim-per-reward-cycle is true, always advance by two. Otherwise
+;; advance by one, but if the claimed reward cycle is fully past because the
+;; current distribution cycle is greater than that cycle's second half, jump to
+;; the first half of the following reward cycle.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (next-claim-after
@@ -196,6 +207,10 @@
     )
 )
 
+;; Read the current STX fee burned per claim installment at registration.
+;;
+;; Returns:
+;;   The fee-per-cycle data-var value in micro-STX.
 (define-read-only (get-fee-per-cycle)
     (var-get fee-per-cycle)
 )
@@ -324,7 +339,7 @@
 )
 
 ;; Returns true if this registration has remaining cycles left and its next
-;; claim distribution is before the current distribution cycle.
+;; claim distribution is strictly before the current distribution cycle.
 (define-private (is-pending
         (registration {
             remaining-cycles: uint,
@@ -340,18 +355,18 @@
     )
 )
 
-;; Get the staker's active pox-5 position, or `none` if they have neither
-;; an active bond nor an active STX-only stake. Prefers a live bond
-;; membership when present; otherwise falls back to STX-only staker-info. A
+;; Resolve the staker's active pox-5 position. Prefers a live bond
+;; membership when present, otherwise falls back to an STX-only stake. A
 ;; staker has at most one active bond and one active STX stake at a time.
+;; Used only at registration; claims key off staker and signer-manager.
+;;
+;; Parameters:
+;;   staker  The principal whose pox-5 position is resolved.
+;;
 ;; Returns:
-;;
-;;   signer             the signer-manager the position is under.
-;;   first-reward-cycle the position's first reward cycle, used to seed
-;;                      next-claim-distribution at registration.
-;;   bond-index         (some n) for a bond position, none for STX-only.
-;;
-;; Used only at registration; claims key off {staker, signer-manager}.
+;;   none if there is no active bond and no active STX-only stake.
+;;   Otherwise a tuple with signer, the signer-manager for the position,
+;;   the first-reward-cycle of the stake, and the bond-index of the stake.
 (define-read-only (get-position (staker principal))
     (match (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-membership staker)
         membership
@@ -433,16 +448,21 @@
     )
 )
 
-;; The keeper's work list. Walks the registration linked list from `cursor`
-;; (or the head if none) and returns up to 100 registrations pending this
-;; distribution cycle: remaining-cycles > 0 and next-claim-distribution <
-;; current-distribution-cycle. Each row:
-;;   signer-manager the registration's signer-manager, a plain principal.
-;;   staker         the staker.
-;;   bond-index     none for an STX stake, (some n) for bond n.
-;;   reward-cycle   floor(next-claim-distribution / 2), the pox-5 cycle to claim.
-;; Paginate by passing the last row's {staker, signer-manager} as the next
-;; `cursor`; done when a page comes back short.
+;; List registrations whose next claim is pending. Walks the registration
+;; linked list from cursor, or from the head when cursor is none, and returns
+;; up to 100 rows where remaining-cycles is greater than zero and
+;; next-claim-distribution is less than the current distribution cycle.
+;; Paginate by passing the last row's staker and signer-manager as the next
+;; cursor. A short page means the walk reached the tail.
+;;
+;; Parameters:
+;;   cursor  none to start at the head, or the last key from the previous page
+;;           so the walk resumes at that key's successor.
+;;
+;; Returns:
+;;   ok wrapping a list of rows. Each row has signer-manager, staker,
+;;   bond-index as none for STX-only or some index for a bond, and reward-cycle
+;;   as next-claim-distribution divided by two, the pox-5 cycle to claim.
 (define-read-only (get-pending-claims (cursor (optional {
     staker: principal,
     signer-manager: principal,
@@ -471,8 +491,16 @@
     )
 )
 
-;; Admin-only. Set the STX fee burned per claim bought. Affects only
-;; registrations created afterward; existing ones keep the claims they bought.
+;; Set the STX fee burned per claim installment at registration. Admin only.
+;; Changes apply only to registrations created afterward; existing registrations
+;; keep the installments they already bought.
+;;
+;; Parameters:
+;;   new-fee  The new fee-per-cycle in micro-STX. Must be greater than zero.
+;;
+;; Returns:
+;;   ok true on success, or an error if the caller is not an admin or new-fee
+;;   is zero.
 (define-public (set-fee-per-cycle (new-fee uint))
     (begin
         (try! (authorize-admin))
@@ -485,17 +513,16 @@
 ;; These touch only the registration map and linked list; no STX moves here.
 ;; The public register-for-claims function is a thin composition of them.
 
-;; Bookkeeping only. Add `num-cycles` claims for {staker, signer}. If a
-;; registration already exists it is topped up -- the bought cycles are added to
-;; its remaining-cycles and its schedule / cadence flags are left untouched (no
-;; re-validation, no second linked-list node). Otherwise the staker's current
-;; pox-5 position is looked up (bond preferred, else STX-only) and a fresh
-;; registration is created. next-claim-distribution starts at
-;; 2*start-reward-cycle + step - 1 where step is 2 (one-claim-per-reward-cycle)
-;; or 1. Moves no STX -- the fee is burned by the caller
-;; (`register-for-claims`). Fails if there is no position under `signer`, if
-;; `start-reward-cycle` is before the position's first-reward-cycle, or if
-;; `num-cycles` is zero.
+;; Bookkeeping only. Add num-cycles claims for staker and signer. If a
+;; registration already exists it is topped up: the bought cycles are added to
+;; remaining-cycles and schedule and cadence flags are left untouched. Otherwise
+;; the staker's current pox-5 position is looked up, preferring a bond then
+;; STX-only, and a fresh registration is created. next-claim-distribution is
+;; seeded from start-reward-cycle using a step of two when
+;; one-claim-per-reward-cycle is true, otherwise one. Moves no STX; the fee is
+;; burned by the caller. Fails if there is no position under signer, if
+;; start-reward-cycle is before the position's first-reward-cycle, or if
+;; num-cycles is zero.
 (define-private (create-registration
         (staker principal)
         (signer principal)
@@ -538,25 +565,36 @@
     )
 )
 
-;; Register a staker for automated reward claims. Permissionless: `tx-sender`
-;; pays `fee` from their own account and may register any staker; the staker
-;; must currently be staking in pox-5. The active bond-index (if any) is looked
-;; up from pox-5 -- callers do not pass it.
+;; Register a staker for automated reward claims. Permissionless: tx-sender
+;; pays fee from their own account and may register any staker. The staker must
+;; currently be staking in pox-5. The active bond-index, if any, is looked up
+;; from pox-5; callers do not pass it. Schedule seeds next-claim-distribution
+;; from start-reward-cycle. If this staker and signer-manager pair is already
+;; registered, the bought claims are added to remaining-cycles and the schedule
+;; and cadence are left unchanged.
+;;
 ;; Parameters:
-;;   staker                      the principal being registered.
-;;   signer-manager              with `staker`, the registration key; must be the
-;;                               signer pox-5 reports for the position.
-;;   start-reward-cycle          first reward cycle on the claim schedule; must
-;;                               be >= the position's first-reward-cycle.
-;;   one-claim-per-reward-cycle  true: at most one claim per reward cycle (step
-;;                               2, seed on second half). false: up to two
-;;                               (step 1, seed on first half, catch-up aware).
-;;   fee                         STX paid, buying min(fee / fee-per-cycle, 192)
-;;                               installments. Only the used portion is burned.
-;; Schedule seeds next-claim-distribution from `start-reward-cycle`. If this
-;; {staker, signer-manager} is already registered, the bought claims are added
-;; to its remaining-cycles instead (schedule/cadence unchanged). Fails if `fee`
-;; buys no claims. Returns claims bought this call.
+;;   staker                      The principal being registered.
+;;   signer-manager              Together with staker forms the registration key.
+;;                               Must be the signer pox-5 reports for the
+;;                               position; every claim pulls from it.
+;;   start-reward-cycle          First reward cycle on the claim schedule. Must
+;;                               be greater than or equal to the position's
+;;                               first-reward-cycle.
+;;   one-claim-per-reward-cycle  When true, at most one claim per reward cycle:
+;;                               step of two, seeded on the second half. When
+;;                               false, up to two claims per reward cycle: step
+;;                               of one, seeded on the first half, with catch-up
+;;                               when a reward cycle is fully past.
+;;   fee                         STX paid by tx-sender. Buys the minimum of fee
+;;                               divided by fee-per-cycle and 192 installments.
+;;                               Only the used portion is burned; any remainder
+;;                               stays with the caller. Admins burn nothing.
+;;
+;; Returns:
+;;   ok with the number of claim installments bought on this call, or an error
+;;   if fee buys no claims, the position is missing or under a different signer,
+;;   or start-reward-cycle is before the position's first-reward-cycle.
 (define-public (register-for-claims
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
@@ -598,9 +636,9 @@
     )
 )
 
-;; Bookkeeping only. Consume one installment: delete the registration at zero
-;; remaining-cycles, otherwise decrement remaining-cycles and advance
-;; next-claim-distribution via next-claim-after (cadence / catch-up aware).
+;; Bookkeeping only. Consume one installment: delete the registration when
+;; remaining-cycles would hit zero, otherwise decrement remaining-cycles and
+;; advance next-claim-distribution via next-claim-after.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (advance-registration
@@ -815,11 +853,22 @@
     )
 )
 
-;; Claim one installment for `staker` under `signer-manager`. Permissionless.
-;; signer-manager must be passed as a trait (claim-staker-rewards / claim-rewards
-;; dispatch on it); the caller learns which from `get-pending-claims`. Reads pox-5's
-;; current distribution cycle and delegates to process-reward-claim-impl. Returns
-;; the withdrawal request-id, if one was initiated.
+;; Claim one installment for staker under signer-manager. Permissionless. The
+;; signer-manager must be passed as a trait so claim-staker-rewards and
+;; claim-rewards can dispatch on it; callers typically learn the principal from
+;; get-pending-claims. Reads pox-5's current distribution cycle and delegates to
+;; process-reward-claim-impl.
+;;
+;; Parameters:
+;;
+;;   staker          The staker whose registration is claimed.
+;;   signer-manager  The signer-manager trait for that registration key.
+;;
+;; Returns:
+;;
+;;   ok with some withdrawal request-id when an L1 withdrawal was initiated,
+;;   ok none for a direct sBTC payout or when the claim path advanced without
+;;   a payout, or an error if the registration is missing or not yet pending.
 ;;
 ;; #[allow(unchecked_data)]
 (define-public (process-reward-claim
@@ -831,13 +880,22 @@
     )
 )
 
-;; Claim installments for the given `stakers`, each keyed with `signer-manager`.
-;; Reads pox-5's current distribution cycle once and threads it through. Skips,
-;; without aborting the batch, any staker with no registration under
-;; `signer-manager` or one not yet pending. Pull/claim failures still advance
-;; and count as claimed. One signer-manager per call, since the trait must be a
-;; single top-level argument; the keeper builds `stakers` from one
-;; signer-manager's group of `get-pending-claims` rows. Returns the count claimed.
+;; Claim installments for the given stakers, each keyed with the same
+;; signer-manager. Reads pox-5's current distribution cycle once and threads it
+;; through. Skips without aborting the batch any staker with no registration
+;; under this signer-manager or one not yet pending. Pull and claim failures
+;; still advance and count as claimed. One signer-manager per call because the
+;; trait must be a single top-level argument; the keeper builds stakers from
+;; that signer-manager's get-pending-claims rows.
+;;
+;; Parameters:
+;;
+;;   signer-manager  The signer-manager trait shared by every staker in the list.
+;;   stakers         Up to 100 staker principals to process in order.
+;;
+;; Returns:
+;;   ok with the number of stakers for which process-reward-claim-impl returned
+;;   ok, including empty-cycle and claim-error advances.
 (define-public (process-reward-claims
         (signer-manager <reward-claim-signer-manager-trait>)
         (stakers (list 100 principal))
@@ -926,19 +984,22 @@
     )
 )
 
-;; The keeper's settlement work list. Walks pending-withdrawal-ll from `cursor`
-;; (or the head if none) and returns up to 100 rows, one per
-;; {staker, signer-manager} with outstanding withdrawals:
-;;   staker, signer-manager  the registration key.
-;;   request-ids             every sbtc-registry request-id awaiting settlement
-;;                           for that key (up to 192).
-;; Every node in the list has a nonempty entry, so unlike get-pending-claims there
-;; is no filtering: each node yields exactly one row, pagination is exact, and
-;; a short page reliably means the tail was reached. Includes entries whether
-;; or not their parent registration still exists. Paginate by passing the last
-;; row's {staker, signer-manager} as the next `cursor`. Doesn't check status
-;; itself -- the caller checks sbtc-registry per request-id before deciding
-;; whether calling settle-pending-withdrawal is worth the gas.
+;; List keys with outstanding L1 withdrawal request-ids. Walks
+;; pending-withdrawal-ll from cursor, or from the head when cursor is none, and
+;; returns up to 100 rows. Every node has a nonempty pending-withdrawals entry,
+;; so each visited node yields exactly one row and a short page means the tail
+;; was reached. Rows are included whether or not their parent registration still
+;; exists. Does not check sbtc-registry status; the caller should check each
+;; request-id before paying gas to settle.
+;;
+;; Parameters:
+;;   cursor  none to start at the head, or the last key from the previous page
+;;           so the walk resumes at that key's successor.
+;;
+;; Returns:
+;;   ok wrapping a list of rows. Each row has staker, signer-manager, and
+;;   request-ids, every sbtc-registry request-id awaiting settlement for that
+;;   key, up to 192.
 (define-read-only (get-pending-settlements (cursor (optional {
     staker: principal,
     signer-manager: principal,
@@ -1042,14 +1103,22 @@
     )
 )
 
-;; Resolve one pending withdrawal. Reads its status from sbtc-registry and:
-;;   pending (status none)     no-op. Calling early just costs the caller's gas.
-;;   accepted (some true)      calls signer-manager::settle-accepted-withdrawal.
-;;   rejected (some false)     calls signer-manager::reclaim-failed-withdrawal.
-;; Either resolved case removes the request-id from pending-withdrawals,
-;; splicing out of pending-withdrawal-ll if the list goes empty. Permissionless;
-;; the caller pays their own gas and receives nothing. Returns whether it
-;; resolved (true) or was still pending (false).
+;; Resolve one pending withdrawal. Reads its status from sbtc-registry. When
+;; status is none the call is a no-op. When accepted, calls the signer-manager's
+;; settle-accepted-withdrawal. When rejected, calls reclaim-failed-withdrawal.
+;; Either resolved case removes the request-id from pending-withdrawals and
+;; splices the key out of pending-withdrawal-ll if that list becomes empty.
+;; Permissionless; the caller pays gas and receives nothing.
+;;
+;; Parameters:
+;;   staker          The staker on the pending-withdrawal key.
+;;   signer-manager  The signer-manager trait for that key.
+;;   request-id      The sbtc-registry withdrawal request-id to settle.
+;;
+;; Returns:
+;;   ok true if the withdrawal was accepted or rejected and removed from the
+;;   pending list, ok false if it is still pending in sbtc-registry, or an
+;;   error if the request-id is not tracked for this key.
 ;;
 ;; #[allow(unchecked_data)]
 (define-public (settle-pending-withdrawal
@@ -1060,10 +1129,16 @@
     (settle-pending-withdrawal-impl staker signer-manager request-id)
 )
 
-;; Batch settle-pending-withdrawal, one signer-manager per call for the same
-;; reason as process-reward-claims: the trait must be a single top-level argument.
-;; Skips, without aborting the batch, any item not found or still pending.
-;; Returns the count resolved.
+;; Batch settle-pending-withdrawal for one signer-manager. The trait must be a
+;; single top-level argument, matching process-reward-claims. Skips without
+;; aborting the batch any item that is not found or still pending.
+;;
+;; Parameters:
+;;   signer-manager  The signer-manager trait shared by every item.
+;;   items           Up to 100 tuples of staker and request-id.
+;;
+;; Returns:
+;;   ok with the number of items that resolved to accepted or rejected.
 (define-public (settle-pending-withdrawals
         (signer-manager <reward-claim-signer-manager-trait>)
         (items (list 100 {
@@ -1108,7 +1183,15 @@
 
 ;;; Admin functions
 
-;; Update the allowed admin principal
+;; Grant or revoke an admin. Caller must already be an admin.
+;;
+;; Parameters:
+;;   admin    The principal whose admin status is updated.
+;;   enabled  true to grant admin, false to revoke.
+;;
+;; Returns:
+;;   ok with the admin principal on success, or an error if the caller is not
+;;   an admin.
 ;;
 ;; #[allow(unchecked_data)]
 (define-public (update-admin
@@ -1127,6 +1210,13 @@
     )
 )
 
+;; Check whether a principal is an admin of this contract.
+;;
+;; Parameters:
+;;   caller  The principal to check.
+;;
+;; Returns:
+;;   true if caller is marked admin, otherwise false.
 (define-read-only (is-admin (caller principal))
     (default-to false (map-get? admins caller))
 )

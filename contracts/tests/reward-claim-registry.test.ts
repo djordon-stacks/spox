@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   ERR_ALREADY_CLAIMED,
   ERR_INSUFFICIENT_FEE,
+  ERR_INVALID_START_REWARD_CYCLE,
   ERR_NO_CURRENT_POSITION,
   ERR_NOT_ADMIN,
   ERR_NOT_REGISTERED,
@@ -45,6 +46,7 @@ import {
   wallet2,
   wallet3,
 } from "./pox-5-fixtures";
+
 
 function settlePendingWithdrawal(staker: string, requestId: bigint, sender: string) {
   return simnet.callPublicFn(
@@ -260,6 +262,50 @@ describe("register-for-claims", () => {
 
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+    );
+  });
+
+  it("top-up preserves next-claim-distribution and cadence after a claim", () => {
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+
+    const nextAfterClaim = STX_FIRST_CLAIM_DIST + 2n;
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(2n, nextAfterClaim));
+
+    expect(
+      registerForClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, false).result,
+    ).toBeOk(Cl.uint(2));
+    // Cadence/start args on top-up are ignored: schedule and one-claim flag stay put.
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(4n, nextAfterClaim));
+  });
+
+  it("rejects a signer-manager that does not match the staker's position", () => {
+    registerMockSignerManager();
+    expect(
+      registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, MOCK_SIGNER_MANAGER, STX_START, true).result,
+    ).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
+  });
+
+  it("rejects a start-reward-cycle before the position's first-reward-cycle", () => {
+    expect(
+      registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, 0n, true).result,
+    ).toBeErr(Cl.uint(ERR_INVALID_START_REWARD_CYCLE));
+  });
+
+  it("seeds the schedule from the caller-supplied start-reward-cycle", () => {
+    const start = 2n;
+    const { result } = registerForClaims(
+      wallet1,
+      FEE_PER_CLAIM,
+      wallet1,
+      SIGNER_MANAGER,
+      start,
+      true,
+    );
+    expect(result).toBeOk(Cl.uint(1));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(1n, initialNextClaimDistribution(start, true)),
     );
   });
 
@@ -506,6 +552,16 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(Cl.uint(ERR_ALREADY_CLAIMED));
   });
+
+  it("deletes the registration on the final installment", () => {
+    registerStxAndAdvance(wallet1, FEE_PER_CLAIM);
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(1n, STX_FIRST_CLAIM_DIST));
+    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
+    expect(getPendingClaims()).toBeOk(Cl.list([]));
+  });
 });
 
 describe("process-reward-claims (batch)", () => {
@@ -572,6 +628,30 @@ describe("process-reward-claims (batch)", () => {
       wallet3,
     );
     expect(result).toBeOk(Cl.uint(1));
+    expect(getPendingClaims()).toBeOk(Cl.list([]));
+  });
+
+  it("skips not-yet-pending stakers without aborting the batch", () => {
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet2, STX_START, Cl.none())]));
+
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "process-reward-claims",
+      [Cl.principal(SIGNER_MANAGER), Cl.list([Cl.principal(wallet1), Cl.principal(wallet2)])],
+      wallet3,
+    );
+    expect(result).toBeOk(Cl.uint(1));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
+    );
+    expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
+    );
     expect(getPendingClaims()).toBeOk(Cl.list([]));
   });
 });
@@ -875,6 +955,21 @@ describe("claim schedule invariants", () => {
       // No funding => get-earned == 0, so the registry skips claim-rewards and
       // hits claim-staker-rewards, which we force to err.
       expect(getEarned(MOCK_SIGNER_MANAGER, 1n, Cl.none())).toBe(0n);
+      expect(processRewardClaim(wallet1, wallet1, MOCK_SIGNER_MANAGER).result).toBeOk(Cl.none());
+      expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
+        stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
+      );
+    });
+
+    it("decrements when claim-rewards succeeds but claim-staker-rewards errors", () => {
+      fundAndCalculateRewards(2000n, 1n);
+      expect(getEarned(MOCK_SIGNER_MANAGER, 1n, Cl.none())).toBeGreaterThan(0n);
+
+      setMockClaimRewardsResult(false);
+      setMockClaimStakerResult(true, 4242n);
+      registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, MOCK_SIGNER_MANAGER, STX_START, true);
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
       expect(processRewardClaim(wallet1, wallet1, MOCK_SIGNER_MANAGER).result).toBeOk(Cl.none());
       expect(getRegistration(wallet1, MOCK_SIGNER_MANAGER)).toBeSome(
         stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
