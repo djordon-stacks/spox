@@ -5,7 +5,7 @@
 
 ;; No registration for this staker and signer-manager combination
 (define-constant ERR_NOT_REGISTERED (err u600))
-;; The registration fee is too small to buy even one sweep
+;; The registration fee is too small to buy even one claim installment
 (define-constant ERR_INSUFFICIENT_FEE (err u601))
 ;; The caller is not an admin to an admin only function
 (define-constant ERR_NOT_ADMIN (err u602))
@@ -28,6 +28,8 @@
 (define-constant ERR_UNAUTHORIZED (err u609))
 ;; A registration already exists for this staker and signer-manager
 (define-constant ERR_ALREADY_REGISTERED (err u610))
+;; Signer-manager associated with staker does not match inputs
+(define-constant ERR_SIGNER_MANAGER_MISMATCH (err u611))
 
 ;; A (list 100 uint) whose only job is to bound the get-pending-claims /
 ;; get-pending-settlements folds to at most 100 node visits per call. The
@@ -573,7 +575,7 @@
         )
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
-        (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
+        (asserts! (is-eq signer (get signer position)) ERR_SIGNER_MANAGER_MISMATCH)
         (asserts! (>= start-reward-cycle (get first-reward-cycle position))
             ERR_INVALID_START_REWARD_CYCLE
         )

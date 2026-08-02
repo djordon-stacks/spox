@@ -8,6 +8,7 @@ import {
   ERR_NO_CURRENT_POSITION,
   ERR_NOT_ADMIN,
   ERR_NOT_REGISTERED,
+  ERR_SIGNER_MANAGER_MISMATCH,
   ERR_UNKNOWN_PENDING_WITHDRAWAL,
   ERR_UNAUTHORIZED,
   ERR_ZERO_FEE,
@@ -280,7 +281,7 @@ describe("register-for-claims", () => {
     registerMockSignerManager();
     expect(
       registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, MOCK_SIGNER_MANAGER, STX_START, true).result,
-    ).toBeErr(Cl.uint(ERR_NO_CURRENT_POSITION));
+    ).toBeErr(Cl.uint(ERR_SIGNER_MANAGER_MISMATCH));
   });
 
   it("rejects a start-reward-cycle before the position's first-reward-cycle", () => {
