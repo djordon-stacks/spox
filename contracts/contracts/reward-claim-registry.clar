@@ -5,7 +5,7 @@
 
 ;; No registration for this staker and signer-manager combination
 (define-constant ERR_NOT_REGISTERED (err u600))
-;; The registration fee is  too small to buy even one sweep
+;; The registration fee is too small to buy even one sweep
 (define-constant ERR_INSUFFICIENT_FEE (err u601))
 ;; The caller is not an admin to an admin only function
 (define-constant ERR_NOT_ADMIN (err u602))
@@ -23,6 +23,9 @@
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
 ;; start-reward-cycle is before the position's first-reward-cycle
 (define-constant ERR_INVALID_START_REWARD_CYCLE (err u608))
+;; This is returned when the tx-sender attempts to cancel a registration
+;; but is not the principal staking.
+(define-constant ERR_UNAUTHORIZED (err u609))
 
 ;; A (list 100 uint) whose only job is to bound the get-pending-claims /
 ;; get-pending-settlements folds to at most 100 node visits per call. The
@@ -633,6 +636,42 @@
             burned: burned,
         })
         (ok num-cycles)
+    )
+)
+
+;; Cancel a registration. Only the staker may call this. Deletes the
+;; registration map entry and removes it from the registration linked list.
+;; Does not touch pending L1 withdrawals for this key; those remain settleable
+;; via settle-pending-withdrawal. Remaining claim installments are forfeited
+;; with no STX refund.
+;;
+;; Parameters:
+;;   staker          The staker on the registration key. Must equal tx-sender.
+;;   signer-manager  The signer-manager principal on the registration key.
+;;
+;; Returns:
+;;   ok true on success, ERR_UNAUTHORIZED if tx-sender is not the staker, or
+;;   ERR_NOT_REGISTERED if no registration exists for this key.
+;;
+;; #[allow(unchecked_data)]
+(define-public (cancel-registration
+        (staker principal)
+        (signer-manager principal)
+    )
+    (let ((key {
+            staker: staker,
+            signer-manager: signer-manager,
+        }))
+        (asserts! (is-eq tx-sender staker) ERR_UNAUTHORIZED)
+        (asserts! (is-some (map-get? registrations key)) ERR_NOT_REGISTERED)
+        (map-delete registrations key)
+        (ll-remove key)
+        (print {
+            topic: "cancel-registration",
+            staker: staker,
+            signer-manager: signer-manager,
+        })
+        (ok true)
     )
 )
 

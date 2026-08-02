@@ -8,6 +8,7 @@ import {
   ERR_NOT_ADMIN,
   ERR_NOT_REGISTERED,
   ERR_UNKNOWN_PENDING_WITHDRAWAL,
+  ERR_UNAUTHORIZED,
   ERR_ZERO_FEE,
   FEE_PER_CLAIM,
   MOCK_SIGNER_MANAGER,
@@ -326,6 +327,89 @@ describe("register-for-claims", () => {
     expect(getPendingClaims()).toBeOk(Cl.list([]));
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+  });
+});
+
+describe("cancel-registration", () => {
+  beforeEach(() => {
+    initPox5();
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
+  });
+
+  it("lets the staker delete their registration", () => {
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+    );
+
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "cancel-registration",
+      [Cl.principal(wallet1), Cl.principal(SIGNER_MANAGER)],
+      wallet1,
+    );
+    expect(result).toBeOk(Cl.bool(true));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
+    expect(getPendingClaims()).toBeOk(Cl.list([]));
+  });
+
+  it("rejects a caller who is not the staker", () => {
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    expect(
+      simnet.callPublicFn(
+        "reward-claim-registry",
+        "cancel-registration",
+        [Cl.principal(wallet1), Cl.principal(SIGNER_MANAGER)],
+        wallet2,
+      ).result,
+    ).toBeErr(Cl.uint(ERR_UNAUTHORIZED));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(1n, STX_FIRST_CLAIM_DIST),
+    );
+  });
+
+  it("rejects when no registration exists", () => {
+    expect(
+      simnet.callPublicFn(
+        "reward-claim-registry",
+        "cancel-registration",
+        [Cl.principal(wallet1), Cl.principal(SIGNER_MANAGER)],
+        wallet1,
+      ).result,
+    ).toBeErr(Cl.uint(ERR_NOT_REGISTERED));
+  });
+
+  it("leaves pending L1 withdrawals settleable after cancel", () => {
+    stakeWithPoxAddr(wallet2, SIGNER_SET_MIN_USTX, 2n, 100n);
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+    expect(processRewardClaim(wallet2, wallet2, SIGNER_MANAGER).result).toBeOk(Cl.some(Cl.uint(1)));
+    expect(getPendingSettlements()).toBeOk(Cl.list([settlement(wallet2, [1n])]));
+
+    expect(
+      simnet.callPublicFn(
+        "reward-claim-registry",
+        "cancel-registration",
+        [Cl.principal(wallet2), Cl.principal(SIGNER_MANAGER)],
+        wallet2,
+      ).result,
+    ).toBeOk(Cl.bool(true));
+    expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeNone();
+    expect(getPendingSettlements()).toBeOk(Cl.list([settlement(wallet2, [1n])]));
+
+    acceptWithdrawal(1n, 30n);
+    expect(
+      simnet.callPublicFn(
+        "reward-claim-registry",
+        "settle-pending-withdrawal",
+        [Cl.principal(wallet2), Cl.principal(SIGNER_MANAGER), Cl.uint(1)],
+        wallet3,
+      ).result,
+    ).toBeOk(Cl.bool(true));
+    expect(getPendingSettlements()).toBeOk(Cl.list([]));
   });
 });
 

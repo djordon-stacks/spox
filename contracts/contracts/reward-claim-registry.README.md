@@ -19,4 +19,5 @@ Schedule is keyed by **distribution cycle** (two per reward cycle). A claim is p
 
 - Registration requires a **live** pox-5 position under that signer-manager; bond-index is looked up, not passed.
 - Empty / failed claims still burn a claim installment.
+- Stakers may `cancel-registration` to drop leftover installments with no refund; pending L1 withdrawals are left in place and remain settleable.
 - Pending L1 withdrawals are capped at 192 per registration; settlement is a separate permissionless step after sBTC accept/reject.

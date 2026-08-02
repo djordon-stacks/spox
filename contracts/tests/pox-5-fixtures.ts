@@ -69,6 +69,7 @@ export const ERR_ALREADY_CLAIMED = 605n;
 export const ERR_TOO_MANY_PENDING = 606n;
 export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 607n;
 export const ERR_INVALID_START_REWARD_CYCLE = 608n;
+export const ERR_UNAUTHORIZED = 609n;
 
 /** reward-claim-registry's default fee-per-sweep. */
 export const FEE_PER_CLAIM = 100_000n;
