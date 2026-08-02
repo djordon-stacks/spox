@@ -23,8 +23,8 @@
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
 ;; start-reward-cycle is before the position's first-reward-cycle
 (define-constant ERR_INVALID_START_REWARD_CYCLE (err u608))
-;; This is returned when the tx-sender attempts to cancel a registration
-;; but is not the principal staking.
+;; This is returned when the tx-sender is not allowed to register, add claims,
+;; or cancel for this staker.
 (define-constant ERR_UNAUTHORIZED (err u609))
 ;; A registration already exists for this staker and signer-manager
 (define-constant ERR_ALREADY_REGISTERED (err u610))
@@ -518,6 +518,12 @@
 ;; These touch only the registration map and linked list; no STX moves here.
 ;; Public register-for-claims / add-claims burn the fee then call these.
 
+;; Staker may act on their own registration; admins may register or top up
+;; anyone. Cancel stays staker-only (see cancel-registration).
+(define-private (authorize-staker-or-admin (staker principal))
+    (ok (asserts! (or (is-eq tx-sender staker) (is-admin tx-sender)) ERR_UNAUTHORIZED))
+)
+
 ;; Burn the STX fee for num-cycles installments unless tx-sender is an admin.
 ;; Returns the micro-STX amount burned.
 (define-private (burn-registration-fee (num-cycles uint))
@@ -600,15 +606,16 @@
     )
 )
 
-;; Register a staker for automated reward claims. Permissionless: tx-sender
-;; pays fee from their own account and may register any staker. The staker must
-;; currently be staking in pox-5. The active bond-index, if any, is looked up
-;; from pox-5; callers do not pass it. Schedule seeds next-claim-distribution
-;; from start-reward-cycle. Fails if this staker and signer-manager pair is
-;; already registered; use add-claims to buy more installments.
+;; Register a staker for automated reward claims. Only the staker or an admin
+;; may call this. Admins pay no fee. The staker must currently be staking in
+;; pox-5. The active bond-index, if any, is looked up from pox-5; callers do
+;; not pass it. Schedule seeds next-claim-distribution from start-reward-cycle.
+;; Fails if this staker and signer-manager pair is already registered; use
+;; add-claims to buy more installments.
 ;;
 ;; Parameters:
-;;   staker                      The principal being registered.
+;;   staker                      The principal being registered. Must equal
+;;                               tx-sender unless the caller is an admin.
 ;;   signer-manager              Together with staker forms the registration key.
 ;;                               Must be the signer pox-5 reports for the
 ;;                               position; every claim pulls from it.
@@ -627,9 +634,9 @@
 ;;
 ;; Returns:
 ;;   ok with the number of claim installments bought on this call, or an error
-;;   if fee buys no claims, a registration already exists, the position is
-;;   missing or under a different signer, or start-reward-cycle is before the
-;;   position's first-reward-cycle.
+;;   if the caller is unauthorized, fee buys no claims, a registration already
+;;   exists, the position is missing or under a different signer, or
+;;   start-reward-cycle is before the position's first-reward-cycle.
 (define-public (register-for-claims
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
@@ -642,6 +649,7 @@
             (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
             (signer (contract-of signer-manager))
         )
+        (try! (authorize-staker-or-admin staker))
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         ;; Fail before burning if this key is already registered.
         (asserts!
@@ -670,12 +678,13 @@
     )
 )
 
-;; Buy additional claim installments for an existing registration.
-;; Permissionless: tx-sender pays fee and may top up any staker. Does not
-;; change next-claim-distribution, one-claim-per-reward-cycle, or bond-index.
+;; Buy additional claim installments for an existing registration. Only the
+;; staker or an admin may call this. Does not change next-claim-distribution,
+;; one-claim-per-reward-cycle, or bond-index.
 ;;
 ;; Parameters:
-;;   staker          The staker on the registration key.
+;;   staker          The staker on the registration key. Must equal tx-sender
+;;                   unless the caller is an admin.
 ;;   signer-manager  The signer-manager principal on the registration key.
 ;;   fee             STX paid by tx-sender. Buys the minimum of fee divided by
 ;;                   fee-per-cycle and 192 installments. Only the used portion
@@ -684,7 +693,10 @@
 ;;
 ;; Returns:
 ;;   ok with the number of claim installments added on this call, or an error
-;;   if fee buys no claims or no registration exists for this key.
+;;   if the caller is unauthorized, fee buys no claims, or no registration
+;;   exists for this key.
+;;
+;; #[allow(unchecked_data)]
 (define-public (add-claims
         (staker principal)
         (signer-manager principal)
@@ -694,6 +706,7 @@
             (price (var-get fee-per-cycle))
             (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
         )
+        (try! (authorize-staker-or-admin staker))
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
         ;; Fail before burning if this key is not registered.
         (asserts!
@@ -718,11 +731,12 @@
     )
 )
 
-;; Cancel a registration. Only the staker may call this. Deletes the
-;; registration map entry and removes it from the registration linked list.
-;; Does not touch pending L1 withdrawals for this key; those remain settleable
-;; via settle-pending-withdrawal. Remaining claim installments are forfeited
-;; with no STX refund.
+;; Cancel a registration. Only the staker may call this - not an admin, even
+;; if the admin created the registration. Deletes the registration map entry
+;; and removes it from the registration linked list. Does not touch pending
+;; L1 withdrawals for this key; those remain settleable via
+;; settle-pending-withdrawal. Remaining claim installments are forfeited with
+;; no STX refund.
 ;;
 ;; Parameters:
 ;;   staker          The staker on the registration key. Must equal tx-sender.

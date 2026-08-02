@@ -298,16 +298,11 @@ describe("register-for-claims", () => {
     );
   });
 
-  it("is permissionless: a third party can register and pay for a staker", () => {
-    const before = stxBalance(wallet2);
-    const { result } = registerForClaims(wallet1, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
-    expect(result).toBeOk(Cl.uint(1));
-    expect(before - stxBalance(wallet2)).toBe(FEE_PER_CLAIM);
-
-    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
-      stxRegistration(1n, STX_FIRST_CLAIM_DIST),
-    );
-    expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeNone();
+  it("rejects a third party who is not an admin", () => {
+    expect(
+      registerForClaims(wallet1, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true).result,
+    ).toBeErr(Cl.uint(ERR_UNAUTHORIZED));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
   });
 
   it("is not pending until next-claim-distribution has elapsed", () => {
@@ -358,11 +353,21 @@ describe("add-claims", () => {
     );
   });
 
-  it("is permissionless: a third party can pay to add claims", () => {
+  it("rejects a third party who is not an admin", () => {
     registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
-    const before = stxBalance(wallet2);
-    expect(addClaims(wallet1, 2n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER).result).toBeOk(Cl.uint(2));
-    expect(before - stxBalance(wallet2)).toBe(2n * FEE_PER_CLAIM);
+    expect(addClaims(wallet1, 2n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER).result).toBeErr(
+      Cl.uint(ERR_UNAUTHORIZED),
+    );
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(1n, STX_FIRST_CLAIM_DIST),
+    );
+  });
+
+  it("lets an admin add claims for a staker", () => {
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    const before = stxBalance(deployer);
+    expect(addClaims(wallet1, 2n * FEE_PER_CLAIM, deployer, SIGNER_MANAGER).result).toBeOk(Cl.uint(2));
+    expect(stxBalance(deployer)).toBe(before);
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(3n, STX_FIRST_CLAIM_DIST),
     );
@@ -405,6 +410,21 @@ describe("cancel-registration", () => {
     ).toBeErr(Cl.uint(ERR_UNAUTHORIZED));
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(1n, STX_FIRST_CLAIM_DIST),
+    );
+  });
+
+  it("rejects an admin canceling on behalf of a staker they registered", () => {
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, deployer, SIGNER_MANAGER, STX_START, true);
+    expect(
+      simnet.callPublicFn(
+        "reward-claim-registry",
+        "cancel-registration",
+        [Cl.principal(wallet1), Cl.principal(SIGNER_MANAGER)],
+        deployer,
+      ).result,
+    ).toBeErr(Cl.uint(ERR_UNAUTHORIZED));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
     );
   });
 
