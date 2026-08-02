@@ -70,6 +70,7 @@ export const ERR_TOO_MANY_PENDING = 606n;
 export const ERR_UNKNOWN_PENDING_WITHDRAWAL = 607n;
 export const ERR_INVALID_START_REWARD_CYCLE = 608n;
 export const ERR_UNAUTHORIZED = 609n;
+export const ERR_ALREADY_REGISTERED = 610n;
 
 /** reward-claim-registry's default fee-per-sweep. */
 export const FEE_PER_CLAIM = 100_000n;
@@ -522,6 +523,20 @@ export function registerForClaims(
       Cl.bool(oneClaimPerRewardCycle),
       Cl.uint(fee),
     ],
+    sender,
+  );
+}
+
+export function addClaims(
+  staker: string,
+  fee: bigint,
+  sender: string,
+  signerManager: string,
+) {
+  return simnet.callPublicFn(
+    "reward-claim-registry",
+    "add-claims",
+    [Cl.principal(staker), Cl.principal(signerManager), Cl.uint(fee)],
     sender,
   );
 }

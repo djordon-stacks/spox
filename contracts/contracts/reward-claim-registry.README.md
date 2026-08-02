@@ -12,8 +12,8 @@ Schedule is keyed by **distribution cycle** (two per reward cycle). A claim is p
 - **Catch-up is immediate.** When many distributions are already past, keepers may call `process-reward-claim` repeatedly.
 - **Always advance.** A failed `claim-rewards` or `claim-staker-rewards` still decrements `remaining-cycles` and advances the schedule.
 - **Self-heal pull.** If pox-5 `get-earned > 0` for the scope, the registry calls `claim-rewards` before `claim-staker-rewards`.
-- **No STX custody.** The fee is burned during registration. Admins register for free.
-- **Top-up preserves schedule.** Re-registering the same `{staker, signer-manager}` only adds to `remaining-cycles` (cadence/start unchanged).
+- **No STX custody.** The fee is burned when buying installments. Admins pay nothing.
+- **add-claims preserves schedule.** Buying more installments for `{staker, signer-manager}` only increases `remaining-cycles`. Re-registering the same key fails with `ERR_ALREADY_REGISTERED`.
 
 ## Gotchas
 

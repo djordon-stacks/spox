@@ -2,6 +2,7 @@ import { Cl, type OptionalCV, type UIntCV } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ERR_ALREADY_CLAIMED,
+  ERR_ALREADY_REGISTERED,
   ERR_INSUFFICIENT_FEE,
   ERR_INVALID_START_REWARD_CYCLE,
   ERR_NO_CURRENT_POSITION,
@@ -11,6 +12,7 @@ import {
   ERR_UNAUTHORIZED,
   ERR_ZERO_FEE,
   FEE_PER_CLAIM,
+  addClaims,
   MOCK_SIGNER_MANAGER,
   SIGNER_MANAGER,
   SIGNER_PRIVATE_KEY,
@@ -254,31 +256,17 @@ describe("register-for-claims", () => {
     expect(result).toBeOk(Cl.uint(1));
   });
 
-  it("tops up an existing registration instead of erroring on a duplicate", () => {
+  it("rejects a duplicate registration", () => {
     const first = registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
     expect(first.result).toBeOk(Cl.uint(1));
 
-    const second = registerForClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
-    expect(second.result).toBeOk(Cl.uint(2));
+    expect(
+      registerForClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true).result,
+    ).toBeErr(Cl.uint(ERR_ALREADY_REGISTERED));
 
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
-      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+      stxRegistration(1n, STX_FIRST_CLAIM_DIST),
     );
-  });
-
-  it("top-up preserves next-claim-distribution and cadence after a claim", () => {
-    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
-    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
-    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
-
-    const nextAfterClaim = STX_FIRST_CLAIM_DIST + 2n;
-    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(2n, nextAfterClaim));
-
-    expect(
-      registerForClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, false).result,
-    ).toBeOk(Cl.uint(2));
-    // Cadence/start args on top-up are ignored: schedule and one-claim flag stay put.
-    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(4n, nextAfterClaim));
   });
 
   it("rejects a signer-manager that does not match the staker's position", () => {
@@ -327,6 +315,57 @@ describe("register-for-claims", () => {
     expect(getPendingClaims()).toBeOk(Cl.list([]));
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+  });
+});
+
+describe("add-claims", () => {
+  beforeEach(() => {
+    initPox5();
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    stakeFor(wallet1, SIGNER_SET_MIN_USTX, 2n);
+  });
+
+  it("adds installments to an existing registration", () => {
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    expect(addClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.uint(2));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+    );
+  });
+
+  it("preserves next-claim-distribution and cadence after a claim", () => {
+    registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+    expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
+
+    const nextAfterClaim = STX_FIRST_CLAIM_DIST + 2n;
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(2n, nextAfterClaim));
+
+    expect(addClaims(wallet1, 2n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.uint(2));
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(4n, nextAfterClaim));
+  });
+
+  it("rejects when no registration exists", () => {
+    expect(addClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER).result).toBeErr(
+      Cl.uint(ERR_NOT_REGISTERED),
+    );
+  });
+
+  it("rejects a fee too small to buy a single claim", () => {
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    expect(addClaims(wallet1, FEE_PER_CLAIM - 1n, wallet1, SIGNER_MANAGER).result).toBeErr(
+      Cl.uint(ERR_INSUFFICIENT_FEE),
+    );
+  });
+
+  it("is permissionless: a third party can pay to add claims", () => {
+    registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    const before = stxBalance(wallet2);
+    expect(addClaims(wallet1, 2n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER).result).toBeOk(Cl.uint(2));
+    expect(before - stxBalance(wallet2)).toBe(2n * FEE_PER_CLAIM);
+    expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
+      stxRegistration(3n, STX_FIRST_CLAIM_DIST),
+    );
   });
 });
 

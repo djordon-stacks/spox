@@ -26,6 +26,8 @@
 ;; This is returned when the tx-sender attempts to cancel a registration
 ;; but is not the principal staking.
 (define-constant ERR_UNAUTHORIZED (err u609))
+;; A registration already exists for this staker and signer-manager
+(define-constant ERR_ALREADY_REGISTERED (err u610))
 
 ;; A (list 100 uint) whose only job is to bound the get-pending-claims /
 ;; get-pending-settlements folds to at most 100 node visits per call. The
@@ -514,18 +516,35 @@
 
 ;; --- Registration lifecycle helpers ---
 ;; These touch only the registration map and linked list; no STX moves here.
-;; The public register-for-claims function is a thin composition of them.
+;; Public register-for-claims / add-claims burn the fee then call these.
 
-;; Bookkeeping only. Add num-cycles claims for staker and signer. If a
-;; registration already exists it is topped up: the bought cycles are added to
-;; remaining-cycles and schedule and cadence flags are left untouched. Otherwise
-;; the staker's current pox-5 position is looked up, preferring a bond then
-;; STX-only, and a fresh registration is created. next-claim-distribution is
-;; seeded from start-reward-cycle using a step of two when
-;; one-claim-per-reward-cycle is true, otherwise one. Moves no STX; the fee is
-;; burned by the caller. Fails if there is no position under signer, if
-;; start-reward-cycle is before the position's first-reward-cycle, or if
-;; num-cycles is zero.
+;; Burn the STX fee for num-cycles installments unless tx-sender is an admin.
+;; Returns the micro-STX amount burned.
+(define-private (burn-registration-fee (num-cycles uint))
+    (let (
+            (price (var-get fee-per-cycle))
+            (burned (if (is-admin tx-sender)
+                u0
+                (* num-cycles price)
+            ))
+        )
+        (if (> burned u0)
+            (begin
+                (try! (stx-burn? burned tx-sender))
+                (ok burned)
+            )
+            (ok u0)
+        )
+    )
+)
+
+;; Bookkeeping only. Create a fresh registration for staker and signer.
+;; Looks up the staker's current pox-5 position, preferring a bond then
+;; STX-only. Seeds next-claim-distribution from start-reward-cycle using a
+;; step of two when one-claim-per-reward-cycle is true, otherwise one. Moves
+;; no STX; the fee is burned by the caller. Fails if a registration already
+;; exists, if there is no position under signer, if start-reward-cycle is
+;; before the position's first-reward-cycle, or if num-cycles is zero.
 (define-private (create-registration
         (staker principal)
         (signer principal)
@@ -533,38 +552,53 @@
         (one-claim-per-reward-cycle bool)
         (num-cycles uint)
     )
-    (let ((key {
-            staker: staker,
-            signer-manager: signer,
-        }))
-        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        (match (map-get? registrations key)
-            existing
-            ;; top up: add the bought cycles to the existing registration
-            (ok (map-set registrations key
-                (merge existing { remaining-cycles: (+ (get remaining-cycles existing) num-cycles) })
-            ))
-            ;; new: look up the staker's current position, then create
-            (let (
-                    (position (unwrap! (get-position staker) ERR_NO_CURRENT_POSITION))
-                    (bond-index (get bond-index position))
-                )
-                (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
-                (asserts! (>= start-reward-cycle (get first-reward-cycle position))
-                    ERR_INVALID_START_REWARD_CYCLE
-                )
-                (map-set registrations key {
-                    bond-index: bond-index,
-                    remaining-cycles: num-cycles,
-                    one-claim-per-reward-cycle: one-claim-per-reward-cycle,
-                    next-claim-distribution: (initial-next-claim-distribution start-reward-cycle
-                        one-claim-per-reward-cycle
-                    ),
-                })
-                (ll-append key)
-                (ok true)
-            )
+    (let (
+            (key {
+                staker: staker,
+                signer-manager: signer,
+            })
+            (position (unwrap! (get-position staker) ERR_NO_CURRENT_POSITION))
+            (bond-index (get bond-index position))
         )
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
+        (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
+        (asserts! (is-eq signer (get signer position)) ERR_NO_CURRENT_POSITION)
+        (asserts! (>= start-reward-cycle (get first-reward-cycle position))
+            ERR_INVALID_START_REWARD_CYCLE
+        )
+        (map-set registrations key {
+            bond-index: bond-index,
+            remaining-cycles: num-cycles,
+            one-claim-per-reward-cycle: one-claim-per-reward-cycle,
+            next-claim-distribution: (initial-next-claim-distribution start-reward-cycle
+                one-claim-per-reward-cycle
+            ),
+        })
+        (ll-append key)
+        (ok true)
+    )
+)
+
+;; Bookkeeping only. Add num-cycles to an existing registration's
+;; remaining-cycles. Schedule and cadence are left untouched. Moves no STX.
+;; Fails if no registration exists or num-cycles is zero.
+(define-private (add-claims-to-registration
+        (staker principal)
+        (signer principal)
+        (num-cycles uint)
+    )
+    (let (
+            (key {
+                staker: staker,
+                signer-manager: signer,
+            })
+            (existing (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED))
+        )
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
+        (map-set registrations key
+            (merge existing { remaining-cycles: (+ (get remaining-cycles existing) num-cycles) })
+        )
+        (ok true)
     )
 )
 
@@ -572,9 +606,8 @@
 ;; pays fee from their own account and may register any staker. The staker must
 ;; currently be staking in pox-5. The active bond-index, if any, is looked up
 ;; from pox-5; callers do not pass it. Schedule seeds next-claim-distribution
-;; from start-reward-cycle. If this staker and signer-manager pair is already
-;; registered, the bought claims are added to remaining-cycles and the schedule
-;; and cadence are left unchanged.
+;; from start-reward-cycle. Fails if this staker and signer-manager pair is
+;; already registered; use add-claims to buy more installments.
 ;;
 ;; Parameters:
 ;;   staker                      The principal being registered.
@@ -596,8 +629,9 @@
 ;;
 ;; Returns:
 ;;   ok with the number of claim installments bought on this call, or an error
-;;   if fee buys no claims, the position is missing or under a different signer,
-;;   or start-reward-cycle is before the position's first-reward-cycle.
+;;   if fee buys no claims, a registration already exists, the position is
+;;   missing or under a different signer, or start-reward-cycle is before the
+;;   position's first-reward-cycle.
 (define-public (register-for-claims
         (staker principal)
         (signer-manager <reward-claim-signer-manager-trait>)
@@ -608,34 +642,79 @@
     (let (
             (price (var-get fee-per-cycle))
             (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
-            ;; An admin can register a staker for free
-            (burned (if (is-admin tx-sender)
-                u0
-                (* num-cycles price)
-            ))
+            (signer (contract-of signer-manager))
         )
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        (if (> burned u0)
-            (begin
-                (try! (stx-burn? burned tx-sender))
-                true
-            )
-            true
-        )
-        (try! (create-registration staker (contract-of signer-manager) start-reward-cycle
-            one-claim-per-reward-cycle num-cycles
-        ))
-        (print {
-            topic: "register-for-claims",
+        ;; Fail before burning if this key is already registered.
+        (asserts! (is-none (map-get? registrations {
             staker: staker,
-            registrant: tx-sender,
-            signer-manager: (contract-of signer-manager),
-            start-reward-cycle: start-reward-cycle,
-            one-claim-per-reward-cycle: one-claim-per-reward-cycle,
-            num-cycles: num-cycles,
-            burned: burned,
-        })
-        (ok num-cycles)
+            signer-manager: signer,
+        }))
+            ERR_ALREADY_REGISTERED
+        )
+        (let ((burned (try! (burn-registration-fee num-cycles))))
+            (try! (create-registration staker signer start-reward-cycle
+                one-claim-per-reward-cycle num-cycles
+            ))
+            (print {
+                topic: "register-for-claims",
+                staker: staker,
+                registrant: tx-sender,
+                signer-manager: signer,
+                start-reward-cycle: start-reward-cycle,
+                one-claim-per-reward-cycle: one-claim-per-reward-cycle,
+                num-cycles: num-cycles,
+                burned: burned,
+            })
+            (ok num-cycles)
+        )
+    )
+)
+
+;; Buy additional claim installments for an existing registration.
+;; Permissionless: tx-sender pays fee and may top up any staker. Does not
+;; change next-claim-distribution, one-claim-per-reward-cycle, or bond-index.
+;;
+;; Parameters:
+;;   staker          The staker on the registration key.
+;;   signer-manager  The signer-manager principal on the registration key.
+;;   fee             STX paid by tx-sender. Buys the minimum of fee divided by
+;;                   fee-per-cycle and 192 installments. Only the used portion
+;;                   is burned; any remainder stays with the caller. Admins
+;;                   burn nothing.
+;;
+;; Returns:
+;;   ok with the number of claim installments added on this call, or an error
+;;   if fee buys no claims or no registration exists for this key.
+(define-public (add-claims
+        (staker principal)
+        (signer-manager principal)
+        (fee uint)
+    )
+    (let (
+            (price (var-get fee-per-cycle))
+            (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
+        )
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
+        ;; Fail before burning if this key is not registered.
+        (asserts! (is-some (map-get? registrations {
+            staker: staker,
+            signer-manager: signer-manager,
+        }))
+            ERR_NOT_REGISTERED
+        )
+        (let ((burned (try! (burn-registration-fee num-cycles))))
+            (try! (add-claims-to-registration staker signer-manager num-cycles))
+            (print {
+                topic: "add-claims",
+                staker: staker,
+                payer: tx-sender,
+                signer-manager: signer-manager,
+                num-cycles: num-cycles,
+                burned: burned,
+            })
+            (ok num-cycles)
+        )
     )
 )
 
