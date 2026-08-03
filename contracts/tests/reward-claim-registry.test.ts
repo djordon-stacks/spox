@@ -1060,7 +1060,6 @@ describe("claim schedule invariants", () => {
       const firstHalf = initialNextClaimDistribution(start, false);
       const secondHalf = firstHalf + 1n;
       const nextCycleFirstHalf = firstHalf + 2n;
-      const bond = Cl.some(Cl.uint(BOND_INDEX));
 
       registerForClaims(wallet1, 4n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, start, false);
       // Leave both halves of `start` in the past before the first claim.
