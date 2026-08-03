@@ -521,7 +521,8 @@
 )
 
 ;; --- Registration lifecycle helpers ---
-;; Public register-for-claims / add-claims escrow STX then call these.
+;; Public register-for-claims escrow STX then calls create-registration.
+;; add-claims escrows and updates the registration inline.
 ;; Advance burns one installment from escrow; cancel refunds the rest.
 
 ;; Staker may act on their own registration; admins may register or top up
@@ -574,7 +575,6 @@
             (bond-index (get bond-index position))
         )
         (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
         (asserts! (is-eq signer (get signer position)) ERR_SIGNER_MANAGER_MISMATCH)
         (asserts! (>= start-reward-cycle (get first-reward-cycle position))
             ERR_INVALID_START_REWARD_CYCLE
@@ -587,33 +587,6 @@
             prepaid-ustx: prepaid-ustx,
         })
         (ll-append key)
-        (ok true)
-    )
-)
-
-;; Bookkeeping only. Add num-cycles and prepaid-ustx to an existing
-;; registration. Schedule and cadence are left untouched. Moves no STX.
-;; Fails if no registration exists or num-cycles is zero.
-(define-private (add-claims-to-registration
-        (staker principal)
-        (signer principal)
-        (num-cycles uint)
-        (prepaid-ustx uint)
-    )
-    (let (
-            (key {
-                staker: staker,
-                signer-manager: signer,
-            })
-            (existing (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED))
-        )
-        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        (map-set registrations key
-            (merge existing {
-                remaining-cycles: (+ (get remaining-cycles existing) num-cycles),
-                prepaid-ustx: (+ (get prepaid-ustx existing) prepaid-ustx),
-            })
-        )
         (ok true)
     )
 )
@@ -719,19 +692,24 @@
     (let (
             (price (var-get fee-per-cycle))
             (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
-        )
-        (try! (authorize-staker-or-admin staker))
-        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        ;; Fail before escrowing if this key is not registered.
-        (asserts!
-            (is-some (map-get? registrations {
+            (key {
                 staker: staker,
                 signer-manager: signer-manager,
-            }))
-            ERR_NOT_REGISTERED
+            })
         )
-        (let ((escrowed (try! (escrow-registration-fee num-cycles))))
-            (try! (add-claims-to-registration staker signer-manager num-cycles escrowed))
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
+        (try! (authorize-staker-or-admin staker))
+        ;; Fail before escrowing if this key is not registered.
+        (let (
+                (existing (unwrap! (map-get? registrations key) ERR_NOT_REGISTERED))
+                (escrowed (try! (escrow-registration-fee num-cycles)))
+            )
+            (map-set registrations key
+                (merge existing {
+                    remaining-cycles: (+ (get remaining-cycles existing) num-cycles),
+                    prepaid-ustx: (+ (get prepaid-ustx existing) escrowed),
+                })
+            )
             (print {
                 topic: "add-claims",
                 staker: staker,
@@ -822,7 +800,9 @@
         )
         (begin
             (if (> burn-amount u0)
-                (try! (as-contract? ((with-stx burn-amount)) (try! (stx-burn? burn-amount tx-sender))))
+                (try! (as-contract? ((with-stx burn-amount))
+                    (try! (stx-burn? burn-amount current-contract))
+                ))
                 true
             )
             (if (<= remaining u1)
@@ -850,8 +830,8 @@
     )
 )
 
-;; Shared by process-reward-claim-impl after any claim-rewards pull (or when none
-;; was needed). Always advances one installment whether claim-staker-rewards
+;; Used by process-reward-claim-impl after a claim-rewards pull or when none
+;; was needed. Always advances one installment whether claim-staker-rewards
 ;; pays or errors, so an untrusted signer-manager cannot stall the registration.
 ;;
 ;; #[allow(unchecked_data)]
@@ -919,8 +899,7 @@
 )
 
 ;; The one-claim primitive behind all three claim entrypoints. Looks up the
-;; registration by {staker, signer-manager}. `current-distribution-cycle` is
-;; passed in rather than re-read, so a batch reads it once. Asserts budget
+;; registration by {staker, signer-manager}. and asserts budget
 ;; remains and next-claim-distribution < current-distribution-cycle.
 ;;
 ;; Self-healing: if pox-5 still shows rewards owed to the signer for this cycle
