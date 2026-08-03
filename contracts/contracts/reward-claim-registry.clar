@@ -521,8 +521,7 @@
 )
 
 ;; --- Registration lifecycle helpers ---
-;; Public register-for-claims escrow STX then calls create-registration.
-;; add-claims escrows and updates the registration inline.
+;; register-for-claims / add-claims escrow STX and write the registration.
 ;; Advance burns one installment from escrow; cancel refunds the rest.
 
 ;; Staker may act on their own registration; admins may register or top up
@@ -546,48 +545,6 @@
             true
         )
         (ok amount)
-    )
-)
-
-;; Bookkeeping only. Create a fresh registration for staker and signer.
-;; Looks up the staker's current pox-5 position, preferring a bond then
-;; STX-only. Seeds next-claim-distribution from start-reward-cycle using a
-;; step of two when one-claim-per-reward-cycle is true, otherwise one. Moves
-;; no STX; the fee is escrowed by the caller. Fails if a registration already
-;; exists, if there is no position under signer, if start-reward-cycle is
-;; before the position's first-reward-cycle, or if num-cycles is zero.
-;;
-;; #[allow(unchecked_data)]
-(define-private (create-registration
-        (staker principal)
-        (signer principal)
-        (start-reward-cycle uint)
-        (one-claim-per-reward-cycle bool)
-        (num-cycles uint)
-        (prepaid-ustx uint)
-    )
-    (let (
-            (key {
-                staker: staker,
-                signer-manager: signer,
-            })
-            (position (unwrap! (get-position staker) ERR_NO_CURRENT_POSITION))
-            (bond-index (get bond-index position))
-        )
-        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        (asserts! (is-eq signer (get signer position)) ERR_SIGNER_MANAGER_MISMATCH)
-        (asserts! (>= start-reward-cycle (get first-reward-cycle position))
-            ERR_INVALID_START_REWARD_CYCLE
-        )
-        (map-set registrations key {
-            bond-index: bond-index,
-            remaining-cycles: num-cycles,
-            one-claim-per-reward-cycle: one-claim-per-reward-cycle,
-            next-claim-distribution: (initial-next-claim-distribution start-reward-cycle one-claim-per-reward-cycle),
-            prepaid-ustx: prepaid-ustx,
-        })
-        (ll-append key)
-        (ok true)
     )
 )
 
@@ -634,21 +591,29 @@
             (price (var-get fee-per-cycle))
             (num-cycles (min-uint (/ fee price) MAX_DISTRIBUTION_CYCLES))
             (signer (contract-of signer-manager))
-        )
-        (try! (authorize-staker-or-admin staker))
-        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
-        ;; Fail before escrowing if this key is already registered.
-        (asserts!
-            (is-none (map-get? registrations {
+            (key {
                 staker: staker,
                 signer-manager: signer,
-            }))
-            ERR_ALREADY_REGISTERED
+            })
+            (position (unwrap! (get-position staker) ERR_NO_CURRENT_POSITION))
+        )
+        (try! (authorize-staker-or-admin staker))
+        ;; Validate before escrowing.
+        (asserts! (> num-cycles u0) ERR_INSUFFICIENT_FEE)
+        (asserts! (is-none (map-get? registrations key)) ERR_ALREADY_REGISTERED)
+        (asserts! (is-eq signer (get signer position)) ERR_SIGNER_MANAGER_MISMATCH)
+        (asserts! (>= start-reward-cycle (get first-reward-cycle position))
+            ERR_INVALID_START_REWARD_CYCLE
         )
         (let ((escrowed (try! (escrow-registration-fee num-cycles))))
-            (try! (create-registration staker signer start-reward-cycle one-claim-per-reward-cycle
-                num-cycles escrowed
-            ))
+            (map-set registrations key {
+                bond-index: (get bond-index position),
+                remaining-cycles: num-cycles,
+                one-claim-per-reward-cycle: one-claim-per-reward-cycle,
+                next-claim-distribution: (initial-next-claim-distribution start-reward-cycle one-claim-per-reward-cycle),
+                prepaid-ustx: escrowed,
+            })
+            (ll-append key)
             (print {
                 topic: "register-for-claims",
                 staker: staker,
