@@ -1,5 +1,4 @@
-;; title: reward-claim-traits
-;; summary: Trait the reward-claim-registry dispatches on to claim and settle rewards
+;; Trait the reward-claim-registry dispatches on to claim and settle rewards
 ;; for a staker via their signer-manager.
 
 (define-trait reward-claim-signer-manager-trait
