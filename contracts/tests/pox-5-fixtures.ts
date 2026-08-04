@@ -37,9 +37,11 @@ export const SBTC_TOKEN =
 export const SBTC_REGISTRY =
   "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry";
 
-// With override_boot_contracts_source, pox-5 boots with this placeholder
-// mainnet principal holding both admin roles.
-const POX5_BOOTSTRAP_ADMIN = "SP72DMR3MJKS7RVBY33JVV7EEJSQ1PYDVKDP10FX";
+// Clarinet ships pox-5 with bond/pause admin as the mainnet boot principal
+// SP000…002Q6VF78, then rewrites that to the simnet/testnet boot address
+// ST000…002AMW42H when loading the contract. initPox5 must call as that
+// remapped principal to take over the admin roles.
+const POX5_BOOTSTRAP_ADMIN = "ST000000000000000000002AMW42H";
 
 // pox-5 constants (contracts/pox-5.clar)
 export const REWARD_CYCLE_LENGTH = 100n;

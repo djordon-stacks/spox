@@ -18,13 +18,6 @@ contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit"
 [[project.requirements]]
 contract_id = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal"
 
-# Deploy the real pox-5 as the boot contract, so that
-# 'ST000000000000000000002AMW42H.pox-5 resolves. Both signer-manager (which
-# impl-traits pox-5.signer-manager-trait) and sweep-registry call that principal,
-# so this is what makes them share one pox-5 instance.
-[project.override_boot_contracts_source]
-pox-5 = "contracts/pox-5.clar"
-
 # Check-checker settings:
 # trusted_sender: if true, inputs are trusted after tx_sender has been checked.
 # trusted_caller: if true, inputs are trusted after contract-caller has been checked.
