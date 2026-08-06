@@ -5,7 +5,7 @@ Permissionless keeper contract that registers PoX-5 stakers for automated reward
 ## Invariants
 
 - **Pending gate.** No claim runs unless there are a positive number registered `remaining-cycles` and `next-claim-distribution` is less than `current-distribution-cycle`.
-- **Cadence is chosen at registration.** `one-claim-per-reward-cycle = true` seeds on the second half of a reward cycle and and steps the `next-claim-distribution` by two; `false` seeds on the first half, steps by 1, and on catch-up jumps to the next reward cycle's first half when the claimed cycle is fully past.
+- **Cadence is chosen at registration.**
 - **Start cycle is explicit.** `start-reward-cycle` must be greater than or equal to the staker's `first-reward-cycle`.
 - **Catch-up is allowed.** When many distributions are already past, keepers may call `process-reward-claim` repeatedly.
 - **Always advance.** A failed `claim-rewards` or `claim-staker-rewards` still decrements `remaining-cycles`, burns one installment from escrow, and advances the schedule.

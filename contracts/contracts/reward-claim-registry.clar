@@ -460,11 +460,13 @@
 )
 
 ;; List registrations whose next claim is pending. Walks the registration
-;; linked list from cursor, or from the head when cursor is none, and returns
-;; up to 100 rows where remaining-cycles is greater than zero and
+;; linked list from cursor, or from the head when cursor is none, and
+;; returns up to 100 rows where remaining-cycles is greater than zero and
 ;; next-claim-distribution is less than the current distribution cycle.
 ;; Paginate by passing the last row's staker and signer-manager as the next
-;; cursor. A short page means the walk reached the tail.
+;; cursor. Note that a short page does not mean the tail was reached,
+;; callers that need all claims must resume from a known key until an empty
+;; list is returned.
 ;;
 ;; Parameters:
 ;;   cursor  none to start at the head, or the last key from the previous page
