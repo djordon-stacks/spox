@@ -1,4 +1,4 @@
-import { Cl, type ClarityValue, type OptionalCV, type UIntCV } from "@stacks/transactions";
+import { Cl, type ClarityValue, type OptionalCV, type UIntCV, privateKeyToAddress, cvToJSON } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ERR_ALREADY_CLAIMED,
@@ -656,6 +656,87 @@ describe("get-pending-claims", () => {
       stxRegistration(3n, STX_FIRST_CLAIM_DIST),
     );
   });
+
+  it(
+    "paginates past non-pending registrations across >100 nodes (Rust get_all style)",
+    () => {
+      // 220 registrations; 5 not-pending in [0,100) and 5 in [100,200).
+      // PENDING_TICKS=100, so three pages: 95 + 95 + 20 pending rows.
+      const TOTAL = 220;
+      const NOT_PENDING_START = 50n; // next-claim-distribution=101, still far future
+      const notPending = new Set([10, 30, 50, 70, 90, 110, 130, 150, 170, 190]);
+
+      const stakers = Array.from({ length: TOTAL }, (_, i) => {
+        const hex = (BigInt(i) + 1n).toString(16).padStart(64, "0") + "01";
+        return privateKeyToAddress(hex, "testnet");
+      });
+
+      for (let i = 0; i < TOTAL; i++) {
+        const staker = stakers[i]!;
+        expect(
+          simnet.transferSTX(SIGNER_SET_MIN_USTX + 1_000_000n, staker, deployer).result,
+        ).toBeOk(Cl.bool(true));
+        stakeFor(staker, SIGNER_SET_MIN_USTX, 2n);
+        const start = notPending.has(i) ? NOT_PENDING_START : STX_START;
+        expect(
+          registerForClaims(staker, FEE_PER_CLAIM, deployer, SIGNER_MANAGER, start, true).result,
+        ).toBeOk(Cl.uint(1));
+      }
+
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      const expectedPending = stakers.filter((_, i) => !notPending.has(i));
+      expect(expectedPending).toHaveLength(210);
+      const notPendingStakers = new Set(
+        [...notPending].map((i) => stakers[i]!),
+      );
+
+      // Same pagination loop as RewardClaimRegistry::get_all_pending_claims:
+      // keep calling with `next` until it is none (empty rows alone are not stop).
+      const all: string[] = [];
+      let cursor: OptionalCV = Cl.none();
+      const pageSizes: number[] = [];
+      for (let guard = 0; guard < 10; guard++) {
+        const json = cvToJSON(getPendingClaims(cursor));
+        expect(json.success).toBe(true);
+        const page = json.value.value as {
+          rows: {
+            value: Array<{
+              value: { staker: { value: string }; "reward-cycle": { value: string } };
+            }>;
+          };
+          next: {
+            value: null | {
+              value: { staker: { value: string }; "signer-manager": { value: string } };
+            };
+          };
+        };
+
+        const rowStakers = page.rows.value.map((row) => row.value.staker.value);
+        pageSizes.push(rowStakers.length);
+        for (const row of page.rows.value) {
+          expect(row.value["reward-cycle"].value).toBe(STX_START.toString());
+          expect(notPendingStakers.has(row.value.staker.value)).toBe(false);
+        }
+        all.push(...rowStakers);
+
+        if (page.next.value === null) {
+          break;
+        }
+        const nextKey = page.next.value.value;
+        cursor = Cl.some(
+          Cl.tuple({
+            staker: Cl.principal(nextKey.staker.value),
+            "signer-manager": Cl.principal(nextKey["signer-manager"].value),
+          }),
+        );
+      }
+
+      expect(pageSizes).toEqual([95, 95, 20]);
+      expect(all).toEqual(expectedPending);
+    },
+    180_000,
+  );
 });
 
 describe("process-reward-claim (direct sBTC payout)", () => {

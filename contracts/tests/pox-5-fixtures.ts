@@ -566,7 +566,7 @@ export function getRegistration(staker: string, signerManager: string) {
   ).result;
 }
 
-export function getPendingClaims(cursor = Cl.none()) {
+export function getPendingClaims(cursor: OptionalCV = Cl.none()) {
   return simnet.callReadOnlyFn(
     "reward-claim-registry",
     "get-pending-claims",
