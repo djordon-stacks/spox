@@ -17,7 +17,7 @@ use crate::error::Error;
 pub struct ClarityTuple(BTreeMap<ClarityName, ClarityValue>);
 
 impl ClarityTuple {
-    /// Create a new ClarityMap from a BTreeMap of ClarityName to ClarityValue.
+    /// Create a new ClarityTuple from a BTreeMap of ClarityName to ClarityValue.
     pub fn new(data_map: BTreeMap<ClarityName, ClarityValue>) -> Self {
         Self(data_map)
     }
