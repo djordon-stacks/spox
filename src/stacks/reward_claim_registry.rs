@@ -4,10 +4,8 @@ use clarity::types::chainstate::StacksAddress;
 use clarity::vm::ClarityName;
 use clarity::vm::ContractName;
 use clarity::vm::Value as ClarityValue;
-use clarity::vm::types::ListData;
 use clarity::vm::types::PrincipalData;
 use clarity::vm::types::QualifiedContractIdentifier;
-use clarity::vm::types::SequenceData;
 use clarity::vm::types::TupleData;
 
 use crate::error::Error;
@@ -37,13 +35,26 @@ pub struct PendingClaim {
 }
 
 impl PendingClaim {
-    /// Registration key for this claim row (used as a pagination cursor).
+    /// Registration key for this claim row.
     pub fn registration_key(&self) -> RegistrationKey {
         RegistrationKey {
             staker: self.staker.clone(),
             signer_manager: self.signer_manager.clone(),
         }
     }
+}
+
+/// One page from `get-pending-claims`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingClaimsPage {
+    /// Pending claim rows found during this bounded walk.
+    pub claims: Vec<PendingClaim>,
+    /// Cursor to pass to the next `get_pending_claims` call.
+    ///
+    /// `None` means the walk reached the tail of the registration list.
+    /// `Some` is the last visited registration key, which may not be a
+    /// pending claim itself.
+    pub next: Option<RegistrationKey>,
 }
 
 /// Client for querying the on-chain reward claim registry contract.
@@ -72,17 +83,13 @@ impl RewardClaimRegistry {
     /// Fetch a page of pending claims from the registry.
     ///
     /// Pass `None` for `cursor` to start at the head of the registration
-    /// linked list. To paginate, pass the last row's `RegistrationKey` from
-    /// the previous page so the walk resumes at that key's successor.
-    ///
-    /// An empty page does not by itself mean the linked list is exhausted:
-    /// non-pending registrations still consume walk ticks. Callers that need
-    /// every pending claim should keep resuming from the last returned key
-    /// (see [`Self::get_all_pending_claims`]).
+    /// linked list. To paginate, pass [`PendingClaimsPage::next`] from the
+    /// previous page. `next == None` means the walk reached the tail; an
+    /// empty `claims` list alone does not.
     pub async fn get_pending_claims(
         &self,
         cursor: Option<&RegistrationKey>,
-    ) -> Result<Vec<PendingClaim>, Error> {
+    ) -> Result<PendingClaimsPage, Error> {
         let cursor_arg = match cursor {
             Some(key) => {
                 let tuple = TupleData::from_data(vec![
@@ -118,33 +125,39 @@ impl RewardClaimRegistry {
             return Err(Error::InvalidStacksResponse("expected a response"));
         };
 
-        let ClarityValue::Sequence(SequenceData::List(ListData { data, .. })) = *response.data
-        else {
-            return Err(Error::InvalidStacksResponse("did not get a list"));
-        };
-
-        data.into_iter().map(PendingClaim::try_from).collect()
+        PendingClaimsPage::try_from(*response.data)
     }
 
     /// Fetch every pending claim by paging through `get-pending-claims`.
     ///
-    /// Starts at the head and keeps calling with the last returned row's
-    /// registration key until a page comes back empty after that key has been
-    /// sent as the cursor (or the first page is empty).
+    /// Continues while the page's `next` cursor is `Some`, including pages
+    /// that return no rows (ticks spent on non-pending registrations).
     pub async fn get_all_pending_claims(&self) -> Result<Vec<PendingClaim>, Error> {
         let mut all = Vec::new();
         let mut cursor: Option<RegistrationKey> = None;
 
         loop {
             let page = self.get_pending_claims(cursor.as_ref()).await?;
-            let Some(last) = page.last() else {
-                break;
-            };
-            cursor = Some(last.registration_key());
-            all.extend(page);
+            all.extend(page.claims);
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
         }
 
         Ok(all)
+    }
+}
+
+impl TryFrom<ClarityValue> for RegistrationKey {
+    type Error = Error;
+
+    fn try_from(value: ClarityValue) -> Result<Self, Self::Error> {
+        let mut clarity_map = ClarityTuple::try_from(value)?;
+        Ok(RegistrationKey {
+            staker: clarity_map.remove_principal("staker")?,
+            signer_manager: clarity_map.remove_principal("signer-manager")?,
+        })
     }
 }
 
@@ -171,6 +184,27 @@ impl TryFrom<ClarityValue> for PendingClaim {
     }
 }
 
+impl TryFrom<ClarityValue> for PendingClaimsPage {
+    type Error = Error;
+
+    fn try_from(value: ClarityValue) -> Result<Self, Self::Error> {
+        let mut clarity_map = ClarityTuple::try_from(value)?;
+
+        let claims = clarity_map
+            .remove_list("rows")?
+            .into_iter()
+            .map(PendingClaim::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let next = clarity_map
+            .remove_option("next")?
+            .map(RegistrationKey::try_from)
+            .transpose()?;
+
+        Ok(PendingClaimsPage { claims, next })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bitcoincore_rpc::jsonrpc::serde_json;
@@ -182,7 +216,7 @@ mod tests {
         fn from(value: &PendingClaim) -> Self {
             let bond_index = value
                 .bond_index
-                .map(|index| Box::new(ClarityValue::UInt(index as u128)));
+                .map(|index| Box::new(ClarityValue::UInt(index)));
             let tuple_entries = vec![
                 (
                     ClarityName::from("signer-manager"),
@@ -198,7 +232,7 @@ mod tests {
                 ),
                 (
                     ClarityName::from("reward-cycle"),
-                    ClarityValue::UInt(value.reward_cycle as u128),
+                    ClarityValue::UInt(value.reward_cycle),
                 ),
             ];
             ClarityValue::Tuple(TupleData::from_data(tuple_entries).unwrap())
@@ -221,9 +255,23 @@ mod tests {
         }
     }
 
-    fn ok_list(claims: &[PendingClaim]) -> ClarityValue {
+    fn ok_page(claims: &[PendingClaim], next: Option<&RegistrationKey>) -> ClarityValue {
         let rows: Vec<ClarityValue> = claims.iter().map(ClarityValue::from).collect();
-        ClarityValue::okay(ClarityValue::cons_list_unsanitized(rows).unwrap()).unwrap()
+        let next_value = match next {
+            Some(key) => ClarityValue::some(ClarityValue::from(key)).unwrap(),
+            None => ClarityValue::none(),
+        };
+        let page = ClarityValue::Tuple(
+            TupleData::from_data(vec![
+                (
+                    ClarityName::from("rows"),
+                    ClarityValue::cons_list_unsanitized(rows).unwrap(),
+                ),
+                (ClarityName::from("next"), next_value),
+            ])
+            .unwrap(),
+        );
+        ClarityValue::okay(page).unwrap()
     }
 
     #[tokio::test]
@@ -239,10 +287,13 @@ mod tests {
             bond_index: None,
             reward_cycle: 42,
         };
+        let next = claim.registration_key();
 
         let raw_json_response = format!(
             r#"{{"okay": true, "result":"0x{}"}}"#,
-            ok_list(&[claim.clone()]).serialize_to_hex().unwrap(),
+            ok_page(&[claim.clone()], Some(&next))
+                .serialize_to_hex()
+                .unwrap(),
         );
 
         let mut stacks_node_server = mockito::Server::new_async().await;
@@ -273,7 +324,13 @@ mod tests {
 
         let result = registry.get_pending_claims(None).await.unwrap();
 
-        assert_eq!(result, vec![claim]);
+        assert_eq!(
+            result,
+            PendingClaimsPage {
+                claims: vec![claim],
+                next: Some(next),
+            }
+        );
         mock.assert();
     }
 
@@ -303,7 +360,7 @@ mod tests {
 
         let raw_json_response = format!(
             r#"{{"okay": true, "result":"0x{}"}}"#,
-            ok_list(&[claim.clone()]).serialize_to_hex().unwrap(),
+            ok_page(&[claim.clone()], None).serialize_to_hex().unwrap(),
         );
 
         let mut stacks_node_server = mockito::Server::new_async().await;
@@ -334,15 +391,21 @@ mod tests {
 
         let result = registry.get_pending_claims(Some(&cursor)).await.unwrap();
 
-        assert_eq!(result, vec![claim]);
+        assert_eq!(
+            result,
+            PendingClaimsPage {
+                claims: vec![claim],
+                next: None,
+            }
+        );
         mock.assert();
     }
 
     #[tokio::test]
-    async fn get_pending_claims_empty_page() {
+    async fn get_pending_claims_empty_page_at_tail() {
         let raw_json_response = format!(
             r#"{{"okay": true, "result":"0x{}"}}"#,
-            ok_list(&[]).serialize_to_hex().unwrap(),
+            ok_page(&[], None).serialize_to_hex().unwrap(),
         );
 
         let mut stacks_node_server = mockito::Server::new_async().await;
@@ -370,31 +433,35 @@ mod tests {
 
         let result = registry.get_pending_claims(None).await.unwrap();
 
-        assert!(result.is_empty());
+        assert_eq!(
+            result,
+            PendingClaimsPage {
+                claims: vec![],
+                next: None,
+            }
+        );
         mock.assert();
     }
 
     #[tokio::test]
-    async fn get_all_pending_claims_pages_until_empty() {
+    async fn get_all_pending_claims_continues_on_empty_rows_with_next() {
         let signer_manager =
             PrincipalData::parse("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.signer-manager")
                 .unwrap();
 
-        let first = PendingClaim {
-            signer_manager: signer_manager.clone(),
+        // First page: ticks burned on non-pending nodes, resume cursor only.
+        let skipped = RegistrationKey {
             staker: PrincipalData::parse("ST2FQWJMF9CGPW34ZWK8FEPNK072NEV1VKRNBBMJ9").unwrap(),
-            bond_index: None,
-            reward_cycle: 42,
+            signer_manager: signer_manager.clone(),
         };
-        let second = PendingClaim {
+        let pending = PendingClaim {
             signer_manager: signer_manager.clone(),
             staker: PrincipalData::parse("ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM").unwrap(),
             bond_index: Some(7),
             reward_cycle: 99,
         };
 
-        let cursor = first.registration_key();
-        let cursor_hex = ClarityValue::some(ClarityValue::from(&cursor))
+        let skipped_hex = ClarityValue::some(ClarityValue::from(&skipped))
             .unwrap()
             .serialize_to_hex()
             .unwrap();
@@ -402,7 +469,7 @@ mod tests {
         let mut stacks_node_server = mockito::Server::new_async().await;
         let path = "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest";
 
-        let first_page = stacks_node_server
+        let empty_with_next = stacks_node_server
             .mock("POST", path)
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [ClarityValue::none().serialize_to_hex().unwrap()]
@@ -411,41 +478,21 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(format!(
                 r#"{{"okay": true, "result":"0x{}"}}"#,
-                ok_list(&[first.clone()]).serialize_to_hex().unwrap(),
+                ok_page(&[], Some(&skipped)).serialize_to_hex().unwrap(),
             ))
             .expect(1)
             .create();
 
-        let second_page = stacks_node_server
+        let pending_then_done = stacks_node_server
             .mock("POST", path)
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
-                "arguments": [cursor_hex]
+                "arguments": [skipped_hex]
             })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(format!(
                 r#"{{"okay": true, "result":"0x{}"}}"#,
-                ok_list(&[second.clone()]).serialize_to_hex().unwrap(),
-            ))
-            .expect(1)
-            .create();
-
-        let second_cursor = second.registration_key();
-        let second_cursor_hex = ClarityValue::some(ClarityValue::from(&second_cursor))
-            .unwrap()
-            .serialize_to_hex()
-            .unwrap();
-
-        let empty_page = stacks_node_server
-            .mock("POST", path)
-            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
-                "arguments": [second_cursor_hex]
-            })))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(format!(
-                r#"{{"okay": true, "result":"0x{}"}}"#,
-                ok_list(&[]).serialize_to_hex().unwrap(),
+                ok_page(&[pending.clone()], None).serialize_to_hex().unwrap(),
             ))
             .expect(1)
             .create();
@@ -463,9 +510,8 @@ mod tests {
 
         let result = registry.get_all_pending_claims().await.unwrap();
 
-        assert_eq!(result, vec![first, second]);
-        first_page.assert();
-        second_page.assert();
-        empty_page.assert();
+        assert_eq!(result, vec![pending]);
+        empty_with_next.assert();
+        pending_then_done.assert();
     }
 }
