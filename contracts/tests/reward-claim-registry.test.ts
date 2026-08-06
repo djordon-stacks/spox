@@ -1,4 +1,4 @@
-import { Cl, type OptionalCV, type UIntCV } from "@stacks/transactions";
+import { Cl, type ClarityValue, type OptionalCV, type UIntCV, privateKeyToAddress, cvToJSON } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ERR_ALREADY_CLAIMED,
@@ -111,6 +111,17 @@ function pendingRow(
     "staker": Cl.principal(staker),
     "bond-index": bondIndex,
     "reward-cycle": Cl.uint(rewardCycle),
+  });
+}
+
+/** Expected `ok` payload from `get-pending-claims`: `{ rows, next }`. */
+function pendingClaimsPage(
+  rows: ReturnType<typeof pendingRow>[],
+  next: ClarityValue = Cl.none(),
+) {
+  return Cl.tuple({
+    rows: Cl.list(rows),
+    next,
   });
 }
 
@@ -315,9 +326,9 @@ describe("register-for-claims", () => {
 
   it("is not pending until next-claim-distribution has elapsed", () => {
     registerForClaims(wallet1, FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none())]));
   });
 });
 
@@ -405,7 +416,7 @@ describe("cancel-registration", () => {
     expect(result).toBeOk(Cl.uint(3n * FEE_PER_CLAIM));
     expect(stxBalance(wallet1) - before).toBe(3n * FEE_PER_CLAIM);
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("refunds remaining escrow after a claim has burned one installment", () => {
@@ -540,7 +551,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
     );
 
     // next == CD, and floor(next/2) == current reward cycle: not accrued yet.
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
       Cl.uint(ERR_ALREADY_CLAIMED),
     );
@@ -562,7 +573,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(currentDistributionCycle()).toBe(STX_FIRST_CLAIM_DIST + 1n);
     expect(currentRewardCycle()).toBe(STX_START + 1n);
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none())]));
 
     const stakerBefore = sbtcBalance(wallet1);
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
@@ -588,7 +599,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
     mineUntilPastDistribution(nextAfter - 1n); // CD becomes 5
     expect(currentDistributionCycle()).toBe(nextAfter);
     expect(currentRewardCycle()).toBe(2n);
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeErr(
       Cl.uint(ERR_ALREADY_CLAIMED),
     );
@@ -597,7 +608,7 @@ describe("STX claim eligibility boundary (no off-by-one)", () => {
     mineUntilPastDistribution(nextAfter);
     expect(currentDistributionCycle()).toBe(nextAfter + 1n);
     expect(currentRewardCycle()).toBe(3n);
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, 2n, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, 2n, Cl.none())]));
   });
 });
 
@@ -609,12 +620,12 @@ describe("get-pending-claims", () => {
   });
 
   it("is empty when nothing is registered", () => {
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("lists a registration once its claim distribution has elapsed", () => {
     registerStxAndAdvance(wallet1, FEE_PER_CLAIM);
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none())]));
   });
 
   it("walks multiple registrations in insertion order", () => {
@@ -623,8 +634,7 @@ describe("get-pending-claims", () => {
     registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
     expect(getPendingClaims()).toBeOk(
-      Cl.list([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]),
-    );
+      pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]));
   });
 
   it("drops a registration from the pending list once it is claimed", () => {
@@ -633,13 +643,11 @@ describe("get-pending-claims", () => {
     registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
-    expect(getPendingClaims()).toBeOk(
-      Cl.list([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]),
-    );
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]));
 
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
 
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet2, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet2, STX_START, Cl.none())]));
 
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
@@ -648,6 +656,87 @@ describe("get-pending-claims", () => {
       stxRegistration(3n, STX_FIRST_CLAIM_DIST),
     );
   });
+
+  it(
+    "paginates past non-pending registrations across >100 nodes (Rust get_all style)",
+    () => {
+      // 220 registrations; 5 not-pending in [0,100) and 5 in [100,200).
+      // PENDING_TICKS=100, so three pages: 95 + 95 + 20 pending rows.
+      const TOTAL = 220;
+      const NOT_PENDING_START = 50n; // next-claim-distribution=101, still far future
+      const notPending = new Set([10, 30, 50, 70, 90, 110, 130, 150, 170, 190]);
+
+      const stakers = Array.from({ length: TOTAL }, (_, i) => {
+        const hex = (BigInt(i) + 1n).toString(16).padStart(64, "0") + "01";
+        return privateKeyToAddress(hex, "testnet");
+      });
+
+      for (let i = 0; i < TOTAL; i++) {
+        const staker = stakers[i]!;
+        expect(
+          simnet.transferSTX(SIGNER_SET_MIN_USTX + 1_000_000n, staker, deployer).result,
+        ).toBeOk(Cl.bool(true));
+        stakeFor(staker, SIGNER_SET_MIN_USTX, 2n);
+        const start = notPending.has(i) ? NOT_PENDING_START : STX_START;
+        expect(
+          registerForClaims(staker, FEE_PER_CLAIM, deployer, SIGNER_MANAGER, start, true).result,
+        ).toBeOk(Cl.uint(1));
+      }
+
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      const expectedPending = stakers.filter((_, i) => !notPending.has(i));
+      expect(expectedPending).toHaveLength(210);
+      const notPendingStakers = new Set(
+        [...notPending].map((i) => stakers[i]!),
+      );
+
+      // Same pagination loop as RewardClaimRegistry::get_all_pending_claims:
+      // keep calling with `next` until it is none (empty rows alone are not stop).
+      const all: string[] = [];
+      let cursor: OptionalCV = Cl.none();
+      const pageSizes: number[] = [];
+      for (let guard = 0; guard < 10; guard++) {
+        const json = cvToJSON(getPendingClaims(cursor));
+        expect(json.success).toBe(true);
+        const page = json.value.value as {
+          rows: {
+            value: Array<{
+              value: { staker: { value: string }; "reward-cycle": { value: string } };
+            }>;
+          };
+          next: {
+            value: null | {
+              value: { staker: { value: string }; "signer-manager": { value: string } };
+            };
+          };
+        };
+
+        const rowStakers = page.rows.value.map((row) => row.value.staker.value);
+        pageSizes.push(rowStakers.length);
+        for (const row of page.rows.value) {
+          expect(row.value["reward-cycle"].value).toBe(STX_START.toString());
+          expect(notPendingStakers.has(row.value.staker.value)).toBe(false);
+        }
+        all.push(...rowStakers);
+
+        if (page.next.value === null) {
+          break;
+        }
+        const nextKey = page.next.value.value;
+        cursor = Cl.some(
+          Cl.tuple({
+            staker: Cl.principal(nextKey.staker.value),
+            "signer-manager": Cl.principal(nextKey["signer-manager"].value),
+          }),
+        );
+      }
+
+      expect(pageSizes).toEqual([95, 95, 20]);
+      expect(all).toEqual(expectedPending);
+    },
+    180_000,
+  );
 });
 
 describe("process-reward-claim (direct sBTC payout)", () => {
@@ -662,7 +751,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none())]));
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(3n, STX_FIRST_CLAIM_DIST),
     );
@@ -679,7 +768,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
     );
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("pulls claim-rewards itself when the signer-manager hasn't, then pays", () => {
@@ -713,7 +802,7 @@ describe("process-reward-claim (direct sBTC payout)", () => {
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
     );
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("errors for a staker with no registration", () => {
@@ -729,11 +818,11 @@ describe("process-reward-claim (direct sBTC payout)", () => {
   it("deletes the registration on the final installment", () => {
     registerStxAndAdvance(wallet1, FEE_PER_CLAIM);
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(stxRegistration(1n, STX_FIRST_CLAIM_DIST));
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none())]));
 
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeNone();
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 });
 
@@ -751,9 +840,7 @@ describe("process-reward-claims (batch)", () => {
     registerForClaims(wallet2, FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
-    expect(getPendingClaims()).toBeOk(
-      Cl.list([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]),
-    );
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none()), pendingRow(wallet2, STX_START, Cl.none())]));
 
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
@@ -762,7 +849,7 @@ describe("process-reward-claims (batch)", () => {
       wallet3,
     );
     expect(result).toBeOk(Cl.uint(2));
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("self-pulls once for the batch when claim-rewards wasn't called", () => {
@@ -786,13 +873,13 @@ describe("process-reward-claims (batch)", () => {
     expect(getEarned(SIGNER_MANAGER, 1n, Cl.none())).toBe(0n);
     expect(sbtcBalance(wallet1) - w1Before).toBeGreaterThan(0n);
     expect(sbtcBalance(wallet2) - w2Before).toBeGreaterThan(0n);
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("skips unregistered stakers without aborting the batch", () => {
     registerStxAndAdvance(wallet1, FEE_PER_CLAIM);
 
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, STX_START, Cl.none())]));
 
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
@@ -801,7 +888,7 @@ describe("process-reward-claims (batch)", () => {
       wallet3,
     );
     expect(result).toBeOk(Cl.uint(1));
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 
   it("skips not-yet-pending stakers without aborting the batch", () => {
@@ -810,7 +897,7 @@ describe("process-reward-claims (batch)", () => {
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
-    expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet2, STX_START, Cl.none())]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet2, STX_START, Cl.none())]));
 
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
@@ -825,7 +912,7 @@ describe("process-reward-claims (batch)", () => {
     expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeSome(
       stxRegistration(2n, STX_FIRST_CLAIM_DIST + 2n),
     );
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
   });
 });
 
@@ -867,12 +954,10 @@ describe("bond path", () => {
       false,
     );
     expect(result).toBeOk(Cl.uint(3));
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
 
     mineUntilPastDistribution(firstClaimDist);
-    expect(getPendingClaims()).toBeOk(
-      Cl.list([pendingRow(wallet1, start, Cl.some(Cl.uint(BOND_INDEX)))]),
-    );
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, start, Cl.some(Cl.uint(BOND_INDEX)))]));
   });
 
   it("process-reward-claim drives the bond claim path (empty-cycle advance)", () => {
@@ -881,7 +966,7 @@ describe("bond path", () => {
     registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, start, false);
     mineUntilPastDistribution(firstClaimDist);
     expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
-    expect(getPendingClaims()).toBeOk(Cl.list([]));
+    expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
     expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
       bondRegistration(BOND_INDEX, 2n, firstClaimDist + 1n),
     );
@@ -1033,7 +1118,7 @@ describe("claim schedule invariants", () => {
       registerForClaims(wallet1, 4n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, start, false);
       mineUntilPastDistribution(firstHalf);
 
-      expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, start, bond)]));
+      expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, start, bond)]));
       expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
       expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
         bondRegistration(BOND_INDEX, 3n, secondHalf),
@@ -1043,10 +1128,10 @@ describe("claim schedule invariants", () => {
         Cl.uint(ERR_ALREADY_CLAIMED),
       );
 
-      expect(getPendingClaims()).toBeOk(Cl.list([]));
+      expect(getPendingClaims()).toBeOk(pendingClaimsPage([]));
 
       mineUntilPastDistribution(secondHalf);
-      expect(getPendingClaims()).toBeOk(Cl.list([pendingRow(wallet1, start, bond)]));
+      expect(getPendingClaims()).toBeOk(pendingClaimsPage([pendingRow(wallet1, start, bond)]));
       expect(processRewardClaim(wallet1, wallet1, SIGNER_MANAGER).result).toBeOk(Cl.none());
       expect(getRegistration(wallet1, SIGNER_MANAGER)).toBeSome(
         bondRegistration(BOND_INDEX, 2n, secondHalf + 1n),
