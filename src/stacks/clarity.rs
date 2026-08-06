@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use clarity::vm::ClarityName;
 use clarity::vm::Value as ClarityValue;
+use clarity::vm::types::ListData;
 use clarity::vm::types::OptionalData;
 use clarity::vm::types::PrincipalData;
 use clarity::vm::types::SequenceData;
@@ -26,6 +27,14 @@ impl ClarityTuple {
     pub fn remove_buff(&mut self, field: &'static str) -> Result<Vec<u8>, Error> {
         match self.0.remove(field) {
             Some(ClarityValue::Sequence(SequenceData::Buffer(buf))) => Ok(buf.data),
+            _ => Err(Error::ClarityMissingTupleEntry(field)),
+        }
+    }
+
+    /// Extract the list value from the given field
+    pub fn remove_list(&mut self, field: &'static str) -> Result<Vec<ClarityValue>, Error> {
+        match self.0.remove(field) {
+            Some(ClarityValue::Sequence(SequenceData::List(ListData { data, .. }))) => Ok(data),
             _ => Err(Error::ClarityMissingTupleEntry(field)),
         }
     }

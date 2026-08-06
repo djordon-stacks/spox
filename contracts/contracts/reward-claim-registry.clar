@@ -402,15 +402,19 @@
 )
 
 ;; Fold step for get-pending-claims. From the current `node` it reads that
-;; registration, appends a row when it is pending, and advances `node` to the
-;; next linked-list entry. Once `node` is none (walked past the tail) it is a
-;; no-op for the remaining ticks. `current-distribution-cycle` rides in the accumulator so
-;; the pending check never re-reads it. `tick` is unused: the tick list only
-;; bounds the number of iterations.
+;; registration, appends a row when it is pending, records `last-visited`, and
+;; advances `node` to the next linked-list entry. Once `node` is none (walked
+;; past the tail) it is a no-op for the remaining ticks.
+;; `current-distribution-cycle` rides in the accumulator so the pending check
+;; never re-reads it. `tick` is unused: the tick list only bounds iterations.
 (define-private (pending-claims-step
         (tick_ uint)
         (acc {
             node: (optional {
+                staker: principal,
+                signer-manager: principal,
+            }),
+            last-visited: (optional {
                 staker: principal,
                 signer-manager: principal,
             }),
@@ -436,6 +440,7 @@
                 (if (is-pending registration (get current-distribution-cycle acc))
                     (merge acc {
                         node: next-node,
+                        last-visited: (some key),
                         rows: (default-to (get rows acc)
                             (as-max-len?
                                 (append (get rows acc) {
@@ -447,11 +452,17 @@
                                 u100
                             )),
                     })
-                    (merge acc { node: next-node })
+                    (merge acc {
+                        node: next-node,
+                        last-visited: (some key),
+                    })
                 )
                 ;; A live linked-list node with no registration should never
                 ;; happen; skip it defensively rather than aborting the read.
-                (merge acc { node: next-node })
+                (merge acc {
+                    node: next-node,
+                    last-visited: (some key),
+                })
             )
         )
         ;; Past the tail: nothing left to visit.
@@ -463,19 +474,21 @@
 ;; linked list from cursor, or from the head when cursor is none, and
 ;; returns up to 100 rows where remaining-cycles is greater than zero and
 ;; next-claim-distribution is less than the current distribution cycle.
-;; Paginate by passing the last row's staker and signer-manager as the next
-;; cursor. Note that a short page does not mean the tail was reached,
-;; callers that need all claims must resume from a known key until an empty
-;; list is returned.
+;; Non-pending registrations still consume walk ticks without appending a
+;; row, so a short or empty `rows` list does not mean the tail was reached.
+;; Use the returned `next` cursor: none means the walk hit the tail; some key
+;; means pass that key as the next `cursor` to resume after it.
 ;;
 ;; Parameters:
-;;   cursor  none to start at the head, or the last key from the previous page
-;;           so the walk resumes at that key's successor.
+;;   cursor  none to start at the head, or the `next` key from the previous
+;;           page so the walk resumes at that key's successor.
 ;;
 ;; Returns:
-;;   ok wrapping a list of rows. Each row has signer-manager, staker,
+;;   ok wrapping { rows, next }. Each row has signer-manager, staker,
 ;;   bond-index as none for STX-only or some index for a bond, and reward-cycle
 ;;   as next-claim-distribution divided by two, the pox-5 cycle to claim.
+;;   `next` is none at the tail, or the last visited registration key when
+;;   more nodes may remain.
 (define-read-only (get-pending-claims (cursor (optional {
     staker: principal,
     signer-manager: principal,
@@ -490,17 +503,27 @@
                 )
                 (var-get registration-ll-head)
             ))
-        )
-        ;; PENDING_TICKS is the (list 100 uint) that bounds the walk to at
-        ;; most 100 node visits per call. `current-distribution-cycle` is
-        ;; read once here and threaded through the fold.
-        (ok (get rows
-            (fold pending-claims-step PENDING_TICKS {
+            ;; PENDING_TICKS is the (list 100 uint) that bounds the walk to at
+            ;; most 100 node visits per call. `current-distribution-cycle` is
+            ;; read once here and threaded through the fold.
+            (walk (fold pending-claims-step PENDING_TICKS {
                 node: start,
+                last-visited: none,
                 current-distribution-cycle: (contract-call? 'ST000000000000000000002AMW42H.pox-5 current-distribution-cycle),
                 rows: (list),
-            })
-        ))
+            }))
+            ;; If `node` is still `some` after the fold, ticks ran out with more
+            ;; list ahead: resume after `last-visited`. If `node` is none, the
+            ;; walk reached the tail or the list was empty.
+            (next (match (get node walk)
+                more-to-do (get last-visited walk)
+                none
+            ))
+        )
+        (ok {
+            rows: (get rows walk),
+            next: next,
+        })
     )
 )
 
