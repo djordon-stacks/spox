@@ -39,7 +39,7 @@ pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Co
 ///    associated with the same signer-manager.
 async fn process_pending_claims(_: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
     // TODO(#41/#42): fetch pending claims and submit process-reward-claims.
-    tracing::trace!(%chain_tip, "reward claim processing not yet implemented");
+    tracing::debug!(%chain_tip, "reward claim processing not yet implemented");
     Ok(())
 }
 
@@ -54,6 +54,6 @@ async fn process_pending_claims(_: &Context, chain_tip: &BlockRef) -> Result<(),
 ///    associated with the same signer-manager.
 async fn process_pending_settlements(_: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
     // TODO(#40/#42): fetch pending settlements and submit settle-pending-withdrawals.
-    tracing::trace!(%chain_tip, "reward settlement processing not yet implemented");
+    tracing::debug!(%chain_tip, "reward settlement processing not yet implemented");
     Ok(())
 }
