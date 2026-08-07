@@ -19,11 +19,11 @@ use crate::error::Error;
 pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Context) {
     while let Some(chain_tip) = rx.recv().await {
         if let Err(error) = process_pending_claims(&context, &chain_tip).await {
-            tracing::warn!(%error, "error processing reward claims and settlements");
+            tracing::warn!(%error, "error processing pending reward claims");
         }
 
         if let Err(error) = process_pending_settlements(&context, &chain_tip).await {
-            tracing::warn!(%error, "error processing reward claims and settlements");
+            tracing::warn!(%error, "error processing pending settlements");
         }
     }
 }

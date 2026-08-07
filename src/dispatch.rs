@@ -1,10 +1,11 @@
 //! This module provides a dispatcher for running functions whenever a new
 //! Bitcoin chain tip is detected.
 
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc;
 
-use crate::MALBOX_CAPACITY;
+use crate::MAILBOX_CAPACITY;
 use crate::bitcoin::BlockRef;
 use crate::context::Context;
 
@@ -16,16 +17,20 @@ where
     O: Future + Send + 'static,
     O::Output: Send + 'static,
 {
-    let (sender, mpsc_rx) = mpsc::channel::<BlockRef>(MALBOX_CAPACITY);
+    let (sender, mpsc_rx) = mpsc::channel::<BlockRef>(MAILBOX_CAPACITY);
 
     tokio::spawn(func(mpsc_rx, context));
 
     loop {
         let chain_tip = match rx.recv().await {
             Ok(chain_tip) => chain_tip,
-            Err(error) => {
-                tracing::warn!(%error, "error waiting for a new bitcoin chain tip");
+            Err(RecvError::Lagged(skipped)) => {
+                tracing::warn!(%skipped, "lagged behind bitcoin chain tip broadcast");
                 continue;
+            }
+            Err(RecvError::Closed) => {
+                tracing::warn!("bitcoin chain tip broadcast closed");
+                break;
             }
         };
 

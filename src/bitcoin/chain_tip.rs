@@ -1,17 +1,12 @@
-//! This module provides a poller for detecting new blocks on the Bitcoin
-//! blockchain.
+//! Poller for detecting new blocks on the Bitcoin blockchain.
 //!
-//! The `BitcoinChainTipPoller` is the primary component, responsible for
-//! periodically calling the `getbestblockhash` RPC method on a Bitcoin Core
-//! node. When it detects a new block hash, it broadcasts it to all subscribers.
+//! [`BitcoinChainTipPoller`] periodically calls [`BitcoinChainTipCaller::get_chain_tip`]
+//! (for Bitcoin Core, the active tip from `getchaintips`). When it detects a new
+//! tip, it broadcasts that [`BlockRef`] to all subscribers.
 //!
-//! This approach provides a resilient, event-driven stream of new block hashes
-//! that other components, like the `BlockObserver`, can consume. The poller is
-//! designed to be robust, handling transient RPC errors by logging and retrying,
-//! ensuring continuous operation as long as the Bitcoin node is reachable.
-//!
-//! The poller is created using the `BitcoinChainTipPollerBuilder`, which
-//! provides a fluent interface for configuration.
+//! Transient RPC errors are logged and retried so the poller keeps running as
+//! long as the node is reachable. Subscribers obtain tips via
+//! [`BitcoinChainTipPoller::new_receiver`].
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +21,7 @@ use crate::error::Error;
 /// The default capacity of the broadcast channel for sending new block hashes.
 const DEFAULT_BROADCAST_CAPACITY: usize = 1000;
 
-/// A trait for calling the `getchaintip` RPC method on a Bitcoin Core node.
+/// A trait for fetching the current Bitcoin chain tip.
 pub trait BitcoinChainTipCaller: Send + Sync {
     /// Get the current Bitcoin chain tip.
     fn get_chain_tip(&self) -> Result<BlockRef, Error>;
@@ -41,11 +36,11 @@ impl BitcoinChainTipCaller for BitcoinCoreClient {
 /// A poller that periodically checks for and broadcasts new Bitcoin chain tips.
 ///
 /// This struct manages a background task that polls a Bitcoin Core node's RPC
-/// to get the latest block hash. It provides a stream of these hashes that other
+/// to get the latest chain tip. It provides a stream of these tips that other
 /// parts of the application can subscribe to.
 #[derive(Clone)]
 pub struct BitcoinChainTipPoller {
-    /// The sender for the broadcast channel that distributes new block hashes.
+    /// The sender for the broadcast channel that distributes new chain tips.
     sender: broadcast::Sender<BlockRef>,
     /// A handle to the background polling task, used for graceful shutdown.
     poller_task_handle: Arc<JoinHandle<()>>,
@@ -53,8 +48,8 @@ pub struct BitcoinChainTipPoller {
 
 /// Runs the RPC polling loop in a background task.
 ///
-/// This function polls the `getbestblockhash` RPC method at a regular interval,
-/// detects new block hashes, and broadcasts them on the provided channel.
+/// This function polls [`BitcoinChainTipCaller::get_chain_tip`] at a regular
+/// interval, detects new tips, and broadcasts them on the provided channel.
 async fn run_poller<B>(rpc: B, sender: broadcast::Sender<BlockRef>, polling_interval: Duration)
 where
     B: BitcoinChainTipCaller,
@@ -63,14 +58,14 @@ where
 
     loop {
         match rpc.get_chain_tip() {
-            Ok(current_hash) => {
-                if Some(&current_hash) != last_seen_chain_tip.as_ref() {
-                    tracing::trace!(new_hash = %current_hash, "detected new best block hash");
+            Ok(current_tip) => {
+                if Some(&current_tip) != last_seen_chain_tip.as_ref() {
+                    tracing::trace!(%current_tip, "detected new bitcoin chain tip");
 
-                    match sender.send(current_hash) {
-                        Ok(_) => last_seen_chain_tip = Some(current_hash),
+                    match sender.send(current_tip) {
+                        Ok(_) => last_seen_chain_tip = Some(current_tip),
                         Err(broadcast::error::SendError(_)) => {
-                            tracing::warn!("no active subscribers for block hash broadcast");
+                            tracing::warn!("no active subscribers for chain tip broadcast");
                         }
                     }
                 }
@@ -78,7 +73,7 @@ where
             Err(error) => {
                 // On a transient error, log it and continue polling. Do not send the
                 // error to consumers, as they cannot act on it.
-                tracing::warn!(%error, "failed to get best block hash during polling; will retry.");
+                tracing::warn!(%error, "failed to get chain tip during polling; will retry");
             }
         }
 
@@ -89,7 +84,7 @@ where
 impl BitcoinChainTipPoller {
     /// Creates and starts a new `BitcoinChainTipPoller` task.
     ///
-    /// This private method is called by the builder. It polls the bitcoin node.
+    /// Spawns a background task that polls `rpc` for chain tip changes.
     pub async fn start<B>(rpc: B, polling_interval: Duration) -> Self
     where
         B: BitcoinChainTipCaller + 'static,
@@ -110,7 +105,7 @@ impl BitcoinChainTipPoller {
         self.poller_task_handle.abort();
     }
 
-    /// Subscribes to the poller, returning a new stream of block hashes.
+    /// Subscribes to the poller, returning a receiver of new chain tips.
     pub fn new_receiver(&self) -> broadcast::Receiver<BlockRef> {
         self.sender.subscribe()
     }
