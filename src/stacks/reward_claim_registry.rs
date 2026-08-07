@@ -433,13 +433,7 @@ mod tests {
 
         let result = registry.get_pending_claims(None).await.unwrap();
 
-        assert_eq!(
-            result,
-            PendingClaimsPage {
-                claims: vec![],
-                next: None,
-            }
-        );
+        assert_eq!(result, PendingClaimsPage { claims: vec![], next: None });
         mock.assert();
     }
 
@@ -492,7 +486,9 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(format!(
                 r#"{{"okay": true, "result":"0x{}"}}"#,
-                ok_page(&[pending.clone()], None).serialize_to_hex().unwrap(),
+                ok_page(&[pending.clone()], None)
+                    .serialize_to_hex()
+                    .unwrap(),
             ))
             .expect(1)
             .create();

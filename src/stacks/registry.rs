@@ -3,7 +3,7 @@
 use bitcoin::ScriptBuf;
 use clarity::types::chainstate::StacksAddress;
 use clarity::vm::types::{
-    ListData, ListTypeData , QualifiedContractIdentifier, SequenceData, TupleData,
+    ListData, ListTypeData, QualifiedContractIdentifier, SequenceData, TupleData,
 };
 use clarity::vm::{ClarityName, ContractName, Value};
 use sbtc::deposits::{DepositScriptInputs, ReclaimScriptInputs};
@@ -182,8 +182,8 @@ impl TryFrom<RawRegisteredDeposit> for MonitoredDeposit {
 mod tests {
     use bitcoin::{NetworkKind, PrivateKey, PublicKey, secp256k1::SECP256K1};
     use bitcoincore_rpc::jsonrpc::serde_json;
-    use clarity::{types::StacksEpochId, vm::types::PrincipalData};
     use clarity::vm::types::OptionalData;
+    use clarity::{types::StacksEpochId, vm::types::PrincipalData};
 
     use super::*;
 
