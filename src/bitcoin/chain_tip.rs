@@ -36,7 +36,7 @@ impl BitcoinChainTipCaller for BitcoinCoreClient {
 #[derive(Debug)]
 pub struct BitcoinChainTipPoller {
     /// The sender for the broadcast channel that distributes new chain tips.
-    receiver: broadcast::Receiver<BlockRef>,
+    sender: broadcast::Sender<BlockRef>,
 }
 
 /// Runs the RPC polling loop in a background task.
@@ -76,16 +76,16 @@ impl BitcoinChainTipPoller {
     where
         B: BitcoinChainTipCaller + 'static,
     {
-        let (sender, receiver) = broadcast::channel::<BlockRef>(CHAIN_TIP_CHANNEL_CAPACITY);
+        let (sender, _) = broadcast::channel::<BlockRef>(CHAIN_TIP_CHANNEL_CAPACITY);
 
         // Spawn the RPC polling task.
-        tokio::spawn(run_poller(rpc, sender, polling_interval));
+        tokio::spawn(run_poller(rpc, sender.clone(), polling_interval));
 
-        Self { receiver }
+        Self { sender }
     }
 
     /// Subscribes to the poller, returning a receiver of new chain tips.
     pub fn new_receiver(&self) -> broadcast::Receiver<BlockRef> {
-        self.receiver.resubscribe()
+        self.sender.subscribe()
     }
 }
