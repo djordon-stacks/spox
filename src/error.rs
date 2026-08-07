@@ -122,4 +122,8 @@ pub enum Error {
     /// Registry returned ids that do not match the requested ids
     #[error("registry returned ids that do not match the requested ids")]
     MismatchingRawAddressIds,
+
+    /// Failed to parse a hex-encoded integer from a Stacks node response.
+    #[error("could not parse hex integer: {0}")]
+    ParseHexInt(#[source] std::num::ParseIntError),
 }

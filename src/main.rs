@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(TryInto::try_into)
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let context = Context::try_from(&config)?;
+    let context = Context::try_new(&config).await?;
 
     match args.command {
         Some(CliCommand::GetSignersXonlyKey) => return get_signers_xonly_key(&config).await,

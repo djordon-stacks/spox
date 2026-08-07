@@ -9,6 +9,7 @@ use crate::config::Settings;
 use crate::error::Error;
 use crate::stacks::node::StacksClient;
 use crate::stacks::registry::DepositAddressRegistry;
+use crate::stacks::wallet::StacksWallet;
 use crate::storage::memory::{SharedStore, Store};
 
 /// Application context
@@ -19,12 +20,16 @@ pub struct Context {
     storage: SharedStore,
     settings: Arc<Settings>,
     registry: Option<Arc<DepositAddressRegistry>>,
+    #[allow(dead_code)]
+    wallet: Option<Arc<StacksWallet>>,
 }
 
-impl TryFrom<&Settings> for Context {
-    type Error = Error;
-
-    fn try_from(value: &Settings) -> Result<Self, Self::Error> {
+impl Context {
+    /// Build a context from settings.
+    ///
+    /// If Stacks config is present, this queries `GET /v2/info` so the wallet
+    /// can be constructed with the node's chain id.
+    pub async fn try_new(value: &Settings) -> Result<Self, Error> {
         let bitcoin_client = BitcoinCoreClient::from_config(
             &value.bitcoin_rpc_endpoint,
             value.node_wallet.as_ref().map(|w| w.name.as_str()),
@@ -47,17 +52,28 @@ impl TryFrom<&Settings> for Context {
             })
             .transpose()?;
 
+        // Nonce is left at 0 on purpose. Callers that submit transactions must
+        // set_nonce from get_account first.
+        let wallet = match value.stacks.as_ref() {
+            Some(stacks) => {
+                let client = StacksClient::new(stacks.rpc_endpoint.clone())?;
+                let info = client.get_node_info().await?;
+                let wallet = StacksWallet::new(stacks.private_key, info.chain_id, 0);
+                Some(Arc::new(wallet))
+            }
+            None => None,
+        };
+
         Ok(Self {
             bitcoin_client,
             emily_config: Arc::new(emily_config),
             storage: Store::new_shared(),
             settings: Arc::new(value.clone()),
             registry,
+            wallet,
         })
     }
-}
 
-impl Context {
     /// Get a reference to the Bitcoin client
     pub fn bitcoin_client(&self) -> &BitcoinCoreClient {
         &self.bitcoin_client
