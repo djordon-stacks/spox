@@ -18,7 +18,6 @@ use std::time::Duration;
 
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::BroadcastStream;
 
 use crate::bitcoin::BlockRef;
 use crate::bitcoin::node::BitcoinCoreClient;
@@ -91,7 +90,7 @@ impl BitcoinChainTipPoller {
     /// Creates and starts a new `BitcoinChainTipPoller` task.
     ///
     /// This private method is called by the builder. It polls the bitcoin node.
-    pub async fn start_new<B>(rpc: B, polling_interval: Duration) -> Self
+    pub async fn start<B>(rpc: B, polling_interval: Duration) -> Self
     where
         B: BitcoinChainTipCaller + 'static,
     {
@@ -112,7 +111,7 @@ impl BitcoinChainTipPoller {
     }
 
     /// Subscribes to the poller, returning a new stream of block hashes.
-    pub fn new_block_ref_stream(&self) -> BroadcastStream<BlockRef> {
-        BroadcastStream::new(self.sender.subscribe())
+    pub fn new_receiver(&self) -> broadcast::Receiver<BlockRef> {
+        self.sender.subscribe()
     }
 }
