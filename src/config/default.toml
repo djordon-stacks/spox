@@ -97,3 +97,9 @@ rpc_endpoint = "http://127.0.0.1:20443"
 # Required: true
 # Environment: SPOX_STACKS__SBTC_DEPLOYER
 sbtc_deployer = "SN3R84XZYA63QS28932XQF3G1J8R9PC3W76P9CSQS"
+
+# Hex-encoded 32-byte secp256k1 private key used to sign Stacks transactions.
+#
+# Required: true
+# Environment: SPOX_STACKS__PRIVATE_KEY
+private_key = "0000000000000000000000000000000000000000000000000000000000000001"

@@ -8,6 +8,7 @@ use bitcoincore_rpc_json::Timestamp;
 use clarity::types::chainstate::StacksAddress;
 use clarity::vm::types::{PrincipalData, QualifiedContractIdentifier};
 use config::{Config, Environment, File};
+use secp256k1::SecretKey;
 use serde::Deserialize;
 use url::Url;
 
@@ -77,6 +78,9 @@ pub struct StacksConfig {
     /// The address of the deployer of the sBTC smart contracts.
     #[serde(deserialize_with = "stacks_address_deserializer")]
     pub sbtc_deployer: StacksAddress,
+    /// Hex-encoded 32-byte secp256k1 private key used to sign Stacks
+    /// transactions.
+    pub private_key: SecretKey,
 }
 
 /// Bitcoin core wallet config.
