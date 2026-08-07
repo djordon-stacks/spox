@@ -1,8 +1,8 @@
 //! This module provides a dispatcher for running functions whenever a new
 //! Bitcoin chain tip is detected.
 
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
 use crate::MAILBOX_CAPACITY;
