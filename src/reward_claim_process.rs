@@ -5,7 +5,8 @@
 //! 2. Fetches pending settlements and broadcasts `settle-pending-withdrawals`
 //!    batches.
 //!
-//! Run this as its own task alongside the deposit runloop (see `main`).
+//! Run via [`crate::dispatch::run_on_chain_tips`] alongside deposit
+//! monitoring (see `main`).
 
 use tokio::sync::mpsc;
 

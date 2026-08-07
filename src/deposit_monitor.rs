@@ -208,8 +208,8 @@ impl DepositMonitor {
     }
 }
 
-/// The loop for processing reward claims that runs whenever a new Bitcoin
-/// block is detected.
+/// The loop for processing monitored deposits whenever a new Bitcoin block
+/// is detected.
 pub async fn process_monitored_deposits(mut rx: mpsc::Receiver<BlockRef>, context: Context) {
     let mut deposit_monitor = DepositMonitor::new(context.clone());
 
