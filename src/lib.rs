@@ -13,3 +13,10 @@ pub mod storage;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+
+/// The capacity of the channel for sending new Bitcoin chain tips to a
+/// process. 
+/// 
+/// Each process should have their own channel to avoid blocking the main
+/// broadcast channel.
+pub const MALBOX_CAPACITY: usize = 1024;

@@ -7,21 +7,16 @@
 //!
 //! Run this as its own task alongside the deposit runloop (see `main`).
 
-use futures::StreamExt;
-use tokio::sync::mpsc::Receiver;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 use crate::bitcoin::BlockRef;
 use crate::context::Context;
 use crate::error::Error;
-
-/// The capacity of the channel for sending new Bitcoin chain tips to the
-/// reward claim process.
-const CHANNEL_CAPACITY: usize = 1024;
-
+use crate::MALBOX_CAPACITY;
 
 /// Runs the claim → settlement pipeline for each new Bitcoin tip.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct RewardClaimProcess;
 
 impl RewardClaimProcess {
@@ -29,23 +24,22 @@ impl RewardClaimProcess {
     /// whenever a new Bitcoin chain tip is detected.
     ///
     /// # Notes
-    /// 
+    ///
     /// This function creates a new channel to send Bitcoin blocks to the
     /// reward claim process. This is done so that the Braodcast channel is
     /// not blocked by how long it takes to process claims.
-    pub async fn run(self, mut block_ref_stream: BroadcastStream<BlockRef>, context: Context) {
-        let (sender, rx) = tokio::sync::mpsc::channel::<BlockRef>(CHANNEL_CAPACITY);
+    pub async fn run(self, mut block_rx: broadcast::Receiver<BlockRef>, context: Context) {
+        let (sender, rx) = mpsc::channel::<BlockRef>(MALBOX_CAPACITY);
 
         tokio::spawn(process_reward_claims(rx, context));
 
         loop {
-            let chain_tip = match block_ref_stream.next().await {
-                Some(Ok(chain_tip)) => chain_tip,
-                Some(Err(error)) => {
+            let chain_tip = match block_rx.recv().await {
+                Ok(chain_tip) => chain_tip,
+                Err(error) => {
                     tracing::warn!(%error, "error waiting for a new bitcoin chain tip");
                     continue;
                 }
-                _ => continue,
             };
 
             if let Err(error) = sender.try_send(chain_tip) {
@@ -57,7 +51,7 @@ impl RewardClaimProcess {
 
 /// The loop for processing reward claims that runs whenever a new Bitcoin
 /// block is detected.
-async fn process_reward_claims(mut rx: Receiver<BlockRef>, context: Context) -> Result<(), Error> {
+async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Context) {
     while let Some(chain_tip) = rx.recv().await {
         if let Err(error) = process_pending_claims(&context, &chain_tip).await {
             tracing::warn!(%error, "error processing reward claims and settlements");
@@ -67,14 +61,12 @@ async fn process_reward_claims(mut rx: Receiver<BlockRef>, context: Context) -> 
             tracing::warn!(%error, "error processing reward claims and settlements");
         }
     }
-
-    Ok(())
 }
 
 /// The function that processes pending claims.
-/// 
+///
 /// # Notes
-/// 
+///
 /// This function works as follows:
 /// 1. Gets all pending claims from the registry.
 /// 2. Submits a process-reward-claims contract call for each batch of
@@ -87,9 +79,9 @@ async fn process_pending_claims(_: &Context, chain_tip: &BlockRef) -> Result<(),
 }
 
 /// The function that processes pending settlements.
-/// 
+///
 /// # Notes
-/// 
+///
 /// This function works as follows:
 /// 1. Gets all pending settlements from the registry.
 /// 2. Submits a settle-pending-withdrawals contract call for each batch of
