@@ -7,6 +7,7 @@ pub mod context;
 pub mod deposit_monitor;
 pub mod error;
 pub mod logging;
+pub mod reward_claim_process;
 pub mod stacks;
 pub mod storage;
 
