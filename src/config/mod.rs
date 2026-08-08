@@ -68,7 +68,6 @@ pub struct Settings {
     ///
     /// Presence of this stanza enables the reward-claim process. Requires
     /// [`Settings::stacks`] as well.
-    #[serde(default)]
     pub reward_claims: Option<RewardClaimsConfig>,
     /// Stacks config, used for CLI commands, registry reads, and reward claims.
     pub stacks: Option<StacksConfig>,
@@ -95,10 +94,8 @@ pub struct RewardClaimsConfig {
     /// Fully-qualified reward-claims smart contract identifier.
     #[serde(deserialize_with = "contract_deserializer")]
     pub claims_contract: QualifiedContractIdentifier,
-    /// Hex-encoded 32-byte secp256k1 private key used to sign Stacks
-    /// transactions.
-    ///
-    /// Environment: `SPOX_REWARD_CLAIMS__PRIVATE_KEY`
+    /// The private key used to sign contract call transactions to the
+    /// rewards-claim registry.
     pub private_key: SecretKey,
 }
 
