@@ -71,6 +71,10 @@ pub enum Error {
     #[error("missing stacks configuration")]
     MissingStacksConfig,
 
+    /// Missing reward-claims configuration
+    #[error("missing reward-claims configuration")]
+    MissingRewardClaimsConfig,
+
     /// No registry contract configured
     #[error("no registry contract configured")]
     NoRegistryConfigured,

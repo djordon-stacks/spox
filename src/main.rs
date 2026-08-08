@@ -145,13 +145,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return get_deposit_address(&monitored, &args).await;
         }
         Some(CliCommand::GetRegistryAddress(args)) => {
-            let context = Context::try_new(&config).await?;
+            let context = Context::try_from(&config)?;
             return get_registry_address(&context, &args).await;
         }
         None => (),
     }
 
-    let context = Context::try_new(&config).await?;
+    let context = Context::try_from(&config)?;
     let store = context.storage();
     for monitored_deposit in monitored {
         store.add(monitored_deposit)?;
@@ -161,17 +161,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bitcoin_rpc = context.bitcoin_client().clone();
     let chain_tip_poller = BitcoinChainTipPoller::start(bitcoin_rpc, config.polling_interval).await;
-    let deposit_rx = chain_tip_poller.new_receiver();
+    let rx1 = chain_tip_poller.new_receiver();
+    let rx2 = chain_tip_poller.new_receiver();
 
-    if config.reward_claims_enabled {
-        let claims_rx = chain_tip_poller.new_receiver();
-        tokio::join!(
-            run_on_chain_tips(process_monitored_deposits, deposit_rx, context.clone()),
-            run_on_chain_tips(process_reward_claims, claims_rx, context),
-        );
-    } else {
-        run_on_chain_tips(process_monitored_deposits, deposit_rx, context).await;
-    }
+    tokio::join!(
+        run_on_chain_tips(process_monitored_deposits, rx1, context.clone()),
+        run_on_chain_tips(process_reward_claims, rx2, context),
+    );
 
     Ok(())
 }

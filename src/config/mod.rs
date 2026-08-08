@@ -14,8 +14,9 @@ use url::Url;
 
 use crate::config::error::SpoxConfigError;
 use crate::config::serialization::{
-    contract_deserializer_option, duration_seconds_deserializer, principal_deserializer,
-    script_deserializer, stacks_address_deserializer, url_deserializer, xonly_deserializer,
+    contract_deserializer, contract_deserializer_option, duration_seconds_deserializer,
+    principal_deserializer, script_deserializer, stacks_address_deserializer, url_deserializer,
+    xonly_deserializer,
 };
 
 pub mod error;
@@ -63,12 +64,13 @@ pub struct Settings {
     /// Registry smart contract address
     #[serde(default, deserialize_with = "contract_deserializer_option")]
     pub registry_contract: Option<QualifiedContractIdentifier>,
-    /// Whether reward-claim / settlement processing is enabled.
+    /// Reward-claim / settlement config.
     ///
-    /// When enabled, `[stacks]` must be present.
+    /// Presence of this stanza enables the reward-claim process. Requires
+    /// [`Settings::stacks`] as well.
     #[serde(default)]
-    pub reward_claims_enabled: bool,
-    /// Stacks config, used only for some CLI commands and for the registry contract
+    pub reward_claims: Option<RewardClaimsConfig>,
+    /// Stacks config, used for CLI commands, registry reads, and reward claims.
     pub stacks: Option<StacksConfig>,
     /// Bitcoin core wallet config
     pub node_wallet: Option<BitcoinCoreWalletConfig>,
@@ -83,11 +85,20 @@ pub struct StacksConfig {
     /// The address of the deployer of the sBTC smart contracts.
     #[serde(deserialize_with = "stacks_address_deserializer")]
     pub sbtc_deployer: StacksAddress,
+}
+
+/// Config for signing and submitting reward-claim transactions.
+///
+/// When this stanza is present, `[stacks]` must also be configured.
+#[derive(Deserialize, Clone, Debug)]
+pub struct RewardClaimsConfig {
+    /// Fully-qualified reward-claims smart contract identifier.
+    #[serde(deserialize_with = "contract_deserializer")]
+    pub claims_contract: QualifiedContractIdentifier,
     /// Hex-encoded 32-byte secp256k1 private key used to sign Stacks
     /// transactions.
     ///
-    /// Required when [`Settings::reward_claims_enabled`] is true.
-    /// Environment: `SPOX_STACKS__PRIVATE_KEY`
+    /// Environment: `SPOX_REWARD_CLAIMS__PRIVATE_KEY`
     pub private_key: SecretKey,
 }
 
@@ -157,10 +168,8 @@ impl Settings {
             return Err(SpoxConfigError::MissingStacksConfig);
         }
 
-        if self.reward_claims_enabled {
-            if self.stacks.is_none() {
-                return Err(SpoxConfigError::MissingStacksConfig);
-            };
+        if self.reward_claims.is_some() && self.stacks.is_none() {
+            return Err(SpoxConfigError::MissingStacksConfig);
         }
 
         if let Some(ref wallet) = self.node_wallet
@@ -228,7 +237,7 @@ mod tests {
         assert_eq!(settings.polling_interval, Duration::from_secs(30));
         assert_eq!(settings.bitcoin_rpc_timeout, Duration::from_mins(5));
         assert!(settings.registry_contract.is_none());
-        assert!(!settings.reward_claims_enabled);
+        assert!(settings.reward_claims.is_none());
         settings.stacks.as_ref().unwrap();
     }
 
@@ -340,18 +349,48 @@ mod tests {
     }
 
     #[test]
-    fn reward_claims_enabled_with_private_key_succeeds() {
+    fn reward_claims_requires_stacks_config() {
         clear_env();
 
-        set_var("SPOX_REWARD_CLAIMS_ENABLED", "true");
+        // Provide a complete [reward_claims] via env but clear stacks by using a
+        // minimal config path is hard; instead set reward_claims fields and
+        // rely on default.toml still having [stacks]. Use validate directly.
+        let mut settings = Settings::new_from_default_config().unwrap();
+        settings.stacks = None;
+        settings.reward_claims = Some(RewardClaimsConfig {
+            claims_contract: QualifiedContractIdentifier::parse(
+                "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.reward-claims",
+            )
+            .unwrap(),
+            private_key: SecretKey::from_slice(&[0xa0; 32]).unwrap(),
+        });
+
+        assert!(matches!(
+            settings.validate(),
+            Err(SpoxConfigError::MissingStacksConfig)
+        ));
+    }
+
+    #[test]
+    fn reward_claims_stanza_loads() {
+        clear_env();
+
+        set_var(
+            "SPOX_REWARD_CLAIMS__CLAIMS_CONTRACT",
+            "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.reward-claims",
+        );
         // Include a hex letter so Environment::try_parsing leaves this as a string.
         set_var(
-            "SPOX_STACKS__PRIVATE_KEY",
+            "SPOX_REWARD_CLAIMS__PRIVATE_KEY",
             "a000000000000000000000000000000000000000000000000000000000000001",
         );
 
         let settings = Settings::new_from_default_config().unwrap();
-        assert!(settings.reward_claims_enabled);
-        settings.stacks.unwrap();
+        let claims = settings.reward_claims.unwrap();
+        assert_eq!(
+            claims.claims_contract.to_string(),
+            "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.reward-claims"
+        );
+        assert!(settings.stacks.is_some());
     }
 }

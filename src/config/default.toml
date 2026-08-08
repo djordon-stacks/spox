@@ -25,13 +25,6 @@ bitcoin_rpc_endpoint = "http://devnet:devnet@127.0.0.1:18443"
 # Environment: SPOX_POLLING_INTERVAL
 # polling_interval = 30
 
-# Run the reward-claim / settlement process on new Bitcoin tips.
-# When enabled, `[stacks]` must include a `private_key`.
-#
-# Required: false
-# Environment: SPOX_REWARD_CLAIMS_ENABLED
-# reward_claims_enabled = false
-
 # Registry smart contract
 #
 # Required: false
@@ -89,27 +82,37 @@ reclaim_script = "75206c44dfe47941b0271c642c549d9a763afce7c6b0495c72f1a32c2f0989
 # !! ===========================================================================
 # !! Stacks configuration
 # !! ---------------------------------------------------------------------------
-# !! This stanza is required only to run some CLI commands, otherwise can be
-# !! omitted.
+# !! This stanza is required for some CLI commands, registry reads, and when
+# !! `[reward_claims]` is present. Otherwise it can be omitted.
 # !! ===========================================================================
 [stacks]
 # Stacks rpc endpoint
-# Required when `reward_claims_enabled = true`.
 #
-# Required: false
+# Required: true (when this stanza is present)
 # Environment: SPOX_STACKS__RPC_ENDPOINT
 rpc_endpoint = "http://127.0.0.1:20443"
 
 # The address of the deployer of the sBTC smart contracts.
-# Required when `reward_claims_enabled = true`.
 #
-# Required: false
+# Required: true (when this stanza is present)
 # Environment: SPOX_STACKS__SBTC_DEPLOYER
 sbtc_deployer = "SN3R84XZYA63QS28932XQF3G1J8R9PC3W76P9CSQS"
 
-# Hex-encoded 32-byte secp256k1 private key used to sign Stacks transactions.
-# Required when `reward_claims_enabled = true`.
+# !! ===========================================================================
+# !! Reward claims configuration
+# !! ---------------------------------------------------------------------------
+# !! Presence of this stanza enables the reward-claim / settlement process.
+# !! Requires `[stacks]` as well.
+# !! ===========================================================================
+# [reward_claims]
+# Fully-qualified principal for the reward-claim-registry.
 #
-# Required: false
-# Environment: SPOX_STACKS__PRIVATE_KEY
-# private_key = "0000000000000000000000000000000000000000000000000000000000000001"
+# Required: true (when this stanza is present)
+# Environment: SPOX_REWARD_CLAIMS__CLAIMS_CONTRACT
+# claims_contract = "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.reward-claim-registry"
+
+# Hex-encoded 32-byte secp256k1 private key used to sign Stacks transactions.
+#
+# Required: true (when this stanza is present)
+# Environment: SPOX_REWARD_CLAIMS__PRIVATE_KEY
+# private_key = "a000000000000000000000000000000000000000000000000000000000000001"

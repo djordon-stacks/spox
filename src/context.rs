@@ -20,19 +20,12 @@ pub struct Context {
     storage: SharedStore,
     settings: Arc<Settings>,
     registry: Option<Arc<DepositAddressRegistry>>,
-    #[allow(dead_code)]
-    wallet: Option<Arc<StacksWallet>>,
 }
 
-impl Context {
-    /// Build a context from settings.
-    ///
-    /// When [`Settings::reward_claims_enabled`] is true, `[stacks]` and
-    /// `private_key` are required, and this queries `GET /v2/info` so the
-    /// signing wallet can be constructed with the node's chain id.
-    /// Nonce starts at `0`; submit paths must refresh it via `get_account` +
-    /// [`StacksWallet::set_nonce`] before signing.
-    pub async fn try_new(value: &Settings) -> Result<Self, Error> {
+impl TryFrom<&Settings> for Context {
+    type Error = Error;
+
+    fn try_from(value: &Settings) -> Result<Self, Self::Error> {
         let bitcoin_client = BitcoinCoreClient::from_config(
             &value.bitcoin_rpc_endpoint,
             value.node_wallet.as_ref().map(|w| w.name.as_str()),
@@ -55,30 +48,36 @@ impl Context {
             })
             .transpose()?;
 
-        let wallet = if value.reward_claims_enabled {
-            // Nonce is left at 0 on purpose. Callers that submit transactions must
-            // set_nonce from get_account first.
-            match value.stacks.as_ref() {
-                Some(stacks) => {
-                    let client = StacksClient::new(stacks.rpc_endpoint.clone())?;
-                    let info = client.get_node_info().await?;
-                    let wallet = StacksWallet::new(stacks.private_key, info.chain_id, 0);
-                    Some(Arc::new(wallet))
-                }
-                None => return Err(Error::MissingStacksConfig),
-            }
-        } else {
-            None
-        };
-
         Ok(Self {
             bitcoin_client,
             emily_config: Arc::new(emily_config),
             storage: Store::new_shared(),
             settings: Arc::new(value.clone()),
             registry,
-            wallet,
         })
+    }
+}
+
+impl Context {
+    /// Construct a Stacks wallet given the information in the config.
+    ///
+    /// # Note
+    ///
+    /// This function reaches out to the stacks node to get the current
+    /// chain ID.
+    pub async fn wallet(&self) -> Result<StacksWallet, Error> {
+        let config = &self.settings;
+        let Some(claims) = config.reward_claims.as_ref() else {
+            return Err(Error::MissingRewardClaimsConfig);
+        };
+        let Some(stacks) = config.stacks.as_ref() else {
+            return Err(Error::MissingStacksConfig);
+        };
+
+        // Let's go and get the current chain id.
+        let client = StacksClient::new(stacks.rpc_endpoint.clone())?;
+        let info = client.get_node_info().await?;
+        Ok(StacksWallet::new(claims.private_key, info.chain_id, 0))
     }
 
     /// Get a reference to the Bitcoin client
