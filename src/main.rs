@@ -139,19 +139,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(TryInto::try_into)
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let context = Context::try_new(&config).await?;
-
     match args.command {
         Some(CliCommand::GetSignersXonlyKey) => return get_signers_xonly_key(&config).await,
         Some(CliCommand::GetDepositAddress(args)) => {
             return get_deposit_address(&monitored, &args).await;
         }
         Some(CliCommand::GetRegistryAddress(args)) => {
+            let context = Context::try_new(&config).await?;
             return get_registry_address(&context, &args).await;
         }
         None => (),
     }
 
+    let context = Context::try_new(&config).await?;
     let store = context.storage();
     for monitored_deposit in monitored {
         store.add(monitored_deposit)?;
@@ -161,13 +161,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bitcoin_rpc = context.bitcoin_client().clone();
     let chain_tip_poller = BitcoinChainTipPoller::start(bitcoin_rpc, config.polling_interval).await;
-    let rx1 = chain_tip_poller.new_receiver();
-    let rx2 = chain_tip_poller.new_receiver();
+    let deposit_rx = chain_tip_poller.new_receiver();
 
-    tokio::join!(
-        run_on_chain_tips(process_monitored_deposits, rx1, context.clone()),
-        run_on_chain_tips(process_reward_claims, rx2, context),
-    );
+    if config.reward_claims_enabled {
+        let claims_rx = chain_tip_poller.new_receiver();
+        tokio::join!(
+            run_on_chain_tips(process_monitored_deposits, deposit_rx, context.clone()),
+            run_on_chain_tips(process_reward_claims, claims_rx, context),
+        );
+    } else {
+        run_on_chain_tips(process_monitored_deposits, deposit_rx, context).await;
+    }
 
     Ok(())
 }

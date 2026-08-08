@@ -63,6 +63,11 @@ pub struct Settings {
     /// Registry smart contract address
     #[serde(default, deserialize_with = "contract_deserializer_option")]
     pub registry_contract: Option<QualifiedContractIdentifier>,
+    /// Whether reward-claim / settlement processing is enabled.
+    ///
+    /// When enabled, `[stacks]` must be present.
+    #[serde(default)]
+    pub reward_claims_enabled: bool,
     /// Stacks config, used only for some CLI commands and for the registry contract
     pub stacks: Option<StacksConfig>,
     /// Bitcoin core wallet config
@@ -80,6 +85,9 @@ pub struct StacksConfig {
     pub sbtc_deployer: StacksAddress,
     /// Hex-encoded 32-byte secp256k1 private key used to sign Stacks
     /// transactions.
+    ///
+    /// Required when [`Settings::reward_claims_enabled`] is true.
+    /// Environment: `SPOX_STACKS__PRIVATE_KEY`
     pub private_key: SecretKey,
 }
 
@@ -149,6 +157,12 @@ impl Settings {
             return Err(SpoxConfigError::MissingStacksConfig);
         }
 
+        if self.reward_claims_enabled {
+            if self.stacks.is_none() {
+                return Err(SpoxConfigError::MissingStacksConfig);
+            };
+        }
+
         if let Some(ref wallet) = self.node_wallet
             && wallet.name.trim().is_empty()
         {
@@ -214,6 +228,8 @@ mod tests {
         assert_eq!(settings.polling_interval, Duration::from_secs(30));
         assert_eq!(settings.bitcoin_rpc_timeout, Duration::from_mins(5));
         assert!(settings.registry_contract.is_none());
+        assert!(!settings.reward_claims_enabled);
+        settings.stacks.as_ref().unwrap();
     }
 
     #[test]
@@ -321,5 +337,21 @@ mod tests {
             Settings::new_from_default_config(),
             Err(SpoxConfigError::EmptyBitcoinWalletName)
         ));
+    }
+
+    #[test]
+    fn reward_claims_enabled_with_private_key_succeeds() {
+        clear_env();
+
+        set_var("SPOX_REWARD_CLAIMS_ENABLED", "true");
+        // Include a hex letter so Environment::try_parsing leaves this as a string.
+        set_var(
+            "SPOX_STACKS__PRIVATE_KEY",
+            "a000000000000000000000000000000000000000000000000000000000000001",
+        );
+
+        let settings = Settings::new_from_default_config().unwrap();
+        assert!(settings.reward_claims_enabled);
+        settings.stacks.unwrap();
     }
 }

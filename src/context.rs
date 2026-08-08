@@ -27,8 +27,11 @@ pub struct Context {
 impl Context {
     /// Build a context from settings.
     ///
-    /// If Stacks config is present, this queries `GET /v2/info` so the wallet
-    /// can be constructed with the node's chain id.
+    /// When [`Settings::reward_claims_enabled`] is true, `[stacks]` and
+    /// `private_key` are required, and this queries `GET /v2/info` so the
+    /// signing wallet can be constructed with the node's chain id.
+    /// Nonce starts at `0`; submit paths must refresh it via `get_account` +
+    /// [`StacksWallet::set_nonce`] before signing.
     pub async fn try_new(value: &Settings) -> Result<Self, Error> {
         let bitcoin_client = BitcoinCoreClient::from_config(
             &value.bitcoin_rpc_endpoint,
@@ -52,16 +55,20 @@ impl Context {
             })
             .transpose()?;
 
-        // Nonce is left at 0 on purpose. Callers that submit transactions must
-        // set_nonce from get_account first.
-        let wallet = match value.stacks.as_ref() {
-            Some(stacks) => {
-                let client = StacksClient::new(stacks.rpc_endpoint.clone())?;
-                let info = client.get_node_info().await?;
-                let wallet = StacksWallet::new(stacks.private_key, info.chain_id, 0);
-                Some(Arc::new(wallet))
+        let wallet = if value.reward_claims_enabled {
+            // Nonce is left at 0 on purpose. Callers that submit transactions must
+            // set_nonce from get_account first.
+            match value.stacks.as_ref() {
+                Some(stacks) => {
+                    let client = StacksClient::new(stacks.rpc_endpoint.clone())?;
+                    let info = client.get_node_info().await?;
+                    let wallet = StacksWallet::new(stacks.private_key, info.chain_id, 0);
+                    Some(Arc::new(wallet))
+                }
+                None => return Err(Error::MissingStacksConfig),
             }
-            None => None,
+        } else {
+            None
         };
 
         Ok(Self {

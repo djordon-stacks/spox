@@ -4,8 +4,9 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use bitcoin::{PublicKey, XOnlyPublicKey};
+use clarity::types::chainstate::BlockHeaderHash;
+use clarity::types::chainstate::ConsensusHash;
 use clarity::types::chainstate::StacksAddress;
-use clarity::types::chainstate::StacksBlockId;
 use clarity::vm::types::{BuffData, SequenceData};
 use clarity::vm::{ClarityName, ContractName, Value};
 use serde::{Deserialize, Deserializer};
@@ -72,8 +73,10 @@ pub struct NodeInfo {
     /// Stacks chain id reported by the node.
     #[serde(rename = "network_id")]
     pub chain_id: u32,
-    /// Index block hash of the tip of the canonical Stacks chain.
-    pub stacks_tip: StacksBlockId,
+    /// Block header hash of the tip of the canonical Stacks chain.
+    pub stacks_tip: BlockHeaderHash,
+    /// Consensus hash of the tip of the canonical Stacks chain.
+    pub stacks_tip_consensus_hash: ConsensusHash,
 }
 
 /// Helper function for converting a hexadecimal string into an integer.
@@ -509,10 +512,14 @@ mod tests {
         assert_eq!(info.chain_id, blockstack_lib::core::CHAIN_ID_TESTNET);
         assert_eq!(
             info.stacks_tip,
-            StacksBlockId::from_hex(
+            BlockHeaderHash::from_hex(
                 "b5f9aa4423ffa7abb585fc00e2783c40225597ec112ee618db86ae23dbbbe88c"
             )
             .unwrap()
+        );
+        assert_eq!(
+            info.stacks_tip_consensus_hash,
+            ConsensusHash::from_hex("dfe87cfd31c1a67fa8b989c83b79aa476e616758").unwrap()
         );
         mock.assert();
     }
