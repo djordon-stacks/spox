@@ -35,9 +35,13 @@ use secp256k1::ecdsa::RecoverableSignature;
 /// equals [`CHAIN_ID_MAINNET`].
 #[derive(Debug)]
 pub struct StacksWallet {
+    /// Secp256k1 private key used to sign transactions.
     secret_key: SecretKey,
+    /// Stacks address derived from [`Self::secret_key`] for this chain.
     address: StacksAddress,
+    /// Stacks chain id written into signed transactions.
     chain_id: u32,
+    /// Local next-nonce counter.
     nonce: AtomicU64,
 }
 

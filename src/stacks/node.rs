@@ -45,9 +45,13 @@ pub struct CallReadResponse {
 /// JSON body returned by GET /v2/accounts/<principal>.
 #[derive(Debug, Deserialize)]
 struct AccountEntryResponse {
+    /// Hex-encoded total balance in micro-STX, including locked funds.
     balance: String,
+    /// Hex-encoded amount locked (stacked) in micro-STX.
     locked: String,
+    /// Stacks block height at which the locked micro-STX unlock.
     unlock_height: u64,
+    /// Next nonce for the account.
     nonce: u64,
 }
 
