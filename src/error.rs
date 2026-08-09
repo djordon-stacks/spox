@@ -119,6 +119,10 @@ pub enum Error {
     #[error("response from stacks node did not conform to the expected schema: {0}")]
     UnexpectedStacksResponse(#[source] reqwest::Error),
 
+    /// Reqwest error
+    #[error("The clarity principal was not a smart contract principal: {0}")]
+    UnexpectedPrincipal(clarity::vm::Value),
+
     /// Unexpected local timestamp
     #[error("unexpected local timestamp")]
     UnexpectedLocalTimestamp,
