@@ -13,7 +13,7 @@ use crate::stacks::clarity::ClarityTuple;
 use crate::stacks::node::StacksClient;
 
 /// Maximum number of stakers accepted by `process-reward-claims` in one call.
-pub const PROCESS_REWARD_CLAIMS_MAX_STAKERS: usize = 100;
+pub const MAX_STAKERS_LENGTH: usize = 100;
 
 /// Key identifying a registration in the reward claim registry.
 #[derive(Debug, Clone, PartialEq, Eq)]

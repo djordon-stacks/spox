@@ -20,16 +20,18 @@ use clarity::vm::types::StandardPrincipalData;
 use clarity::vm::types::TraitIdentifier;
 use clarity::vm::types::TypeSignature;
 
-use crate::stacks::reward_claim_registry::PROCESS_REWARD_CLAIMS_MAX_STAKERS;
+use crate::stacks::reward_claim_registry::MAX_STAKERS_LENGTH;
 use crate::stacks::reward_claim_registry::ProcessRewardClaimsBatch;
-
-const MAX_STAKERS_LENGTH: u32 = PROCESS_REWARD_CLAIMS_MAX_STAKERS as u32;
 
 /// The type signature for the list of 100 stakers.
 ///
-/// ListTypeData::new_list only returns an Err when max_len is greater than MiB
+/// ListTypeData::new_list only returns an Err when max would be size is
+/// greater than 1 MiB, or if the type depth is greater than 32. Our type
+/// depth is 1 and the max size is well 148 * 100 + 6, well under 1 MiB. We
+/// also have a test that exercises this path so we know that this won't
+/// panic in production.
 const LIST_PRINCIPALS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
-    ListTypeData::new_list(TypeSignature::PrincipalType, MAX_STAKERS_LENGTH).unwrap()
+    ListTypeData::new_list(TypeSignature::PrincipalType, MAX_STAKERS_LENGTH as u32).unwrap()
 });
 
 /// The name of the trait that signer managers must implement.
@@ -55,10 +57,6 @@ fn make_trait_identifier(deployer: StacksAddress) -> TraitIdentifier {
 ///
 /// # Note
 ///
-/// * It's unlikely that this will be necessary since the signers control
-///   the contract to begin with, we implicitly trust it.
-/// * We cannot enforce any conditions on the destination of any sBTC, just
-///   the source and the amount.
 /// * SIP-005 describes the post conditions, including its limitations, and
 ///   can be found here
 ///   https://github.com/stacksgov/sips/blob/main/sips/sip-005/sip-005-blocks-and-transactions.md#transaction-post-conditions
