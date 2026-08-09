@@ -62,8 +62,9 @@ pub struct PendingClaimsPage {
 
 /// Arguments for one `process-reward-claims` contract call.
 ///
-/// All [`Self::stakers`] share [`Self::signer_manager`], and the list length is
-/// at most [`PROCESS_REWARD_CLAIMS_MAX_STAKERS`].
+/// All [`Self::stakers`] share [`Self::signer_manager`], and the list
+/// length is at most [`PROCESS_REWARD_CLAIMS_MAX_STAKERS`]. (TODO: enforce
+/// this at construction time)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessRewardClaimsBatch {
     /// Signer-manager trait principal passed to `process-reward-claims`.

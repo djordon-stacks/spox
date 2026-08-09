@@ -139,3 +139,23 @@ impl AsContractCall for ProcessRewardClaimsBatch {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clarity::vm::types::PrincipalData;
+
+    use super::*;
+
+    #[test]
+    fn process_reward_claims_contract_call_creation() {
+        // This is to check that this function doesn't implicitly panic. If
+        // it doesn't panic now, it can never panic at runtime.
+        let call = ProcessRewardClaimsBatch {
+            signer_manager: QualifiedContractIdentifier::transient(),
+            stakers: vec![PrincipalData::from(StacksAddress::burn_address(false))],
+            deployer: StacksAddress::burn_address(false),
+        };
+
+        let _ = call.as_contract_call();
+    }
+}
