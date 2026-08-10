@@ -198,7 +198,6 @@ impl TryFrom<ClarityValue> for PendingClaim {
             // This should never happen, because registration checks that
             // the signer manager implements a trait and only smart
             // contract principals can implement traits.
-            let signer_manager = ClarityValue::from(signer_manager);
             return Err(Error::UnexpectedPrincipal(signer_manager));
         };
 
