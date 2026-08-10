@@ -82,7 +82,7 @@ impl RewardClaimsBatch {
     pub fn dummy() -> Self {
         Self {
             signer_manager: QualifiedContractIdentifier::transient(),
-            stakers: vec![PrincipalData::from(StacksAddress::burn_address(false))].to_vec(),
+            stakers: vec![PrincipalData::from(StacksAddress::burn_address(false))],
             deployer: StacksAddress::burn_address(false),
         }
     }
@@ -379,7 +379,6 @@ mod tests {
         }
     }
 
-
     #[tokio::test]
     async fn get_pending_claims_works_without_cursor() {
         let staker = PrincipalData::parse("ST2FQWJMF9CGPW34ZWK8FEPNK072NEV1VKRNBBMJ9").unwrap();
@@ -627,11 +626,18 @@ mod tests {
 
     #[test]
     fn batch_pending_claims_groups_by_signer_manager() {
-        let sm_a = QualifiedContractIdentifier::parse("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.signer-manager").unwrap();
-        let sm_b = QualifiedContractIdentifier::parse("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.other-manager").unwrap();
+        let sm_a = QualifiedContractIdentifier::parse(
+            "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.signer-manager",
+        )
+        .unwrap();
+        let sm_b = QualifiedContractIdentifier::parse(
+            "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.other-manager",
+        )
+        .unwrap();
         let staker1 = PrincipalData::parse("ST2FQWJMF9CGPW34ZWK8FEPNK072NEV1VKRNBBMJ9").unwrap();
         let staker2 = PrincipalData::parse("ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM").unwrap();
-        let staker3 = PrincipalData::parse("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.staker-3").unwrap();
+        let staker3 =
+            PrincipalData::parse("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.staker-3").unwrap();
 
         let claims = vec![
             claim(&sm_a, staker1.clone(), 1),
@@ -659,12 +665,18 @@ mod tests {
 
     #[test]
     fn batch_pending_claims_chunks_at_max_stakers() {
-        let sm = QualifiedContractIdentifier::parse("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.signer-manager").unwrap();
+        let sm = QualifiedContractIdentifier::parse(
+            "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.signer-manager",
+        )
+        .unwrap();
         let claims: Vec<_> = (0..=MAX_STAKERS_LENGTH)
             .map(|i| {
                 claim(
                     &sm,
-                    PrincipalData::parse(&format!("ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.s{i}")).unwrap(),
+                    PrincipalData::parse(&format!(
+                        "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.s{i}"
+                    ))
+                    .unwrap(),
                     i as u128,
                 )
             })

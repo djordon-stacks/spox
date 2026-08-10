@@ -57,7 +57,7 @@ pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Co
             tracing::warn!(%error, "error processing pending reward claims");
         }
 
-        if let Err(error) = process_pending_settlements(&chain_tip).await {
+        if let Err(error) = process_pending_settlements(&context, &chain_tip).await {
             tracing::warn!(%error, "error processing pending settlements");
         }
     }
@@ -114,7 +114,7 @@ async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Resul
 /// 2. Submits a settle-pending-withdrawals contract call for each batch of
 ///    settlements, where a batch is a group of at most 100 stakers who are
 ///    associated with the same signer-manager.
-async fn process_pending_settlements(chain_tip: &BlockRef) -> Result<(), Error> {
+async fn process_pending_settlements(_: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
     // TODO(#40/#42): fetch pending settlements and submit settle-pending-withdrawals.
     tracing::debug!(%chain_tip, "reward settlement processing not yet implemented");
     Ok(())
@@ -124,9 +124,9 @@ async fn process_pending_settlements(chain_tip: &BlockRef) -> Result<(), Error> 
 #[derive(Debug)]
 pub struct RewardClaimState {
     /// The reward-claims registry
-    pub registry: RewardClaimRegistry,
+    registry: RewardClaimRegistry,
     /// A wallet for signing Stacks transactions
-    pub wallet: StacksWallet,
+    wallet: StacksWallet,
 }
 
 impl RewardClaimState {
