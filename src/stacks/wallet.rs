@@ -81,7 +81,7 @@ impl StacksWallet {
         self.nonce.store(value, Ordering::Relaxed);
     }
 
-    /// Get the next nonce for the wallet.
+    /// Set the next nonce to the provided value.
     pub fn get_nonce(&self) -> u64 {
         self.nonce.load(Ordering::Relaxed)
     }
@@ -92,7 +92,7 @@ impl StacksWallet {
     pub fn as_unsigned_tx_auth(&self, tx_fee: u64) -> SinglesigSpendingCondition {
         SinglesigSpendingCondition {
             signer: self.address.bytes().clone(),
-            nonce: self.nonce.fetch_add(1, Ordering::Relaxed),
+            nonce: self.get_nonce(),
             tx_fee,
             hash_mode: SinglesigHashMode::P2PKH,
             key_encoding: TransactionPublicKeyEncoding::Compressed,

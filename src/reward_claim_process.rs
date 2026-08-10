@@ -86,12 +86,16 @@ async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Resul
         match state.client().submit_tx(&tx).await {
             Ok(SubmitTxResponse::Acceptance(txid)) => {
                 tracing::debug!(%txid, "submitted process-reward-claims batch");
+                state.increment_wallet_nonce();
             }
             Ok(SubmitTxResponse::Rejection(error)) => {
                 tracing::warn!(%error, "failed to submit process-reward-claims batch");
-                state.decrement_wallet_nonce();
             }
             Err(error) => {
+                // It could be the case that we broadcast the transaction
+                // to the node and it was rejeected by then we got an error
+                // here anyway. I don't see a clean way to handle this
+                // without adding another issue.
                 tracing::warn!(%error, "failed to submit process-reward-claims batch");
             }
         }
@@ -158,10 +162,10 @@ impl RewardClaimState {
         Ok(())
     }
 
-    /// Decrement the wallet nonce by 1.
-    pub fn decrement_wallet_nonce(&self) {
+    /// Increment the wallet nonce by 1.
+    pub fn increment_wallet_nonce(&self) {
         let nonce = self.wallet.get_nonce();
-        self.wallet.set_nonce(nonce.saturating_sub(1));
+        self.wallet.set_nonce(nonce.saturating_add(1));
     }
 
     /// Get a reference to the client.
