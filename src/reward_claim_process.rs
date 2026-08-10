@@ -100,7 +100,7 @@ async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Resul
             }
             Err(error) => {
                 // It could be the case that we broadcast the transaction
-                // to the node and it was rejeected by then we got an error
+                // to the node and it was rejected by then we got an error
                 // here anyway. I don't see a clean way to handle this
                 // without adding another issue.
                 tracing::warn!(%error, "failed to submit process-reward-claims batch");

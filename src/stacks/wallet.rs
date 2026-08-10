@@ -25,14 +25,11 @@ use secp256k1::ecdsa::RecoverableSignature;
 
 /// A single-sig Stacks wallet that tracks a local nonce counter.
 ///
-/// The nonce starts at whatever value is passed to [`StacksWallet::new`] (typically `0`)
-/// and is incremented when building transaction auth via [`StacksWallet::as_unsigned_tx_auth`].
-/// Callers must refresh the nonce from the node with [`StacksWallet::set_nonce`] (after
-/// `get_account`) before submitting transactions.
+/// The nonce starts at whatever value is passed to [`StacksWallet::new`]
+/// and must be manually incremented or set.
 ///
-/// `chain_id` is the exact value from the stacks node's `/v2/info` `network_id` field and is
-/// written into signed transactions. Address version bytes only depend on whether that value
-/// equals [`CHAIN_ID_MAINNET`].
+/// The `chain_id` should be the exact value from the stacks node's
+/// `/v2/info` `network_id` field.
 #[derive(Debug)]
 pub struct StacksWallet {
     /// Secp256k1 private key used to sign transactions.
@@ -86,9 +83,10 @@ impl StacksWallet {
         self.nonce.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Build an unsigned single-sig spending condition and advance the local nonce.
+    /// Build an unsigned single-sig spending condition.
     ///
-    /// The returned spending condition has a fee and nonce set, but an empty signature.
+    /// The returned spending condition has a fee and nonce set, but an
+    /// empty signature.
     pub fn as_unsigned_tx_auth(&self, tx_fee: u64) -> SinglesigSpendingCondition {
         SinglesigSpendingCondition {
             signer: self.address.bytes().clone(),
@@ -101,8 +99,6 @@ impl StacksWallet {
     }
 
     /// Build and sign a Stacks transaction for the given payload.
-    ///
-    /// This advances the local nonce via [`StacksWallet::as_unsigned_tx_auth`].
     pub fn sign_tx(&self, payload: TransactionPayload, tx_fee: u64) -> StacksTransaction {
         use TransactionSpendingCondition::Singlesig;
 
