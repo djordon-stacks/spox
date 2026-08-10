@@ -25,11 +25,11 @@ use crate::stacks::reward_claim_registry::ProcessRewardClaimsBatch;
 
 /// The type signature for the list of 100 stakers.
 ///
-/// ListTypeData::new_list only returns an Err when max would be size is
-/// greater than 1 MiB, or if the type depth is greater than 32. Our type
-/// depth is 1 and the max size is well 148 * 100 + 6, well under 1 MiB. We
-/// also have a test that exercises this path so we know that this won't
-/// panic in production.
+/// ListTypeData::new_list only returns an Err when max size of a value
+/// with this type could be greater than 1 MiB, or if the type depth is
+/// greater than 32. Our type depth is 1 and the max size is 148 * 100
+/// + 6, well under 1 MiB. We also have a test that exercises this path so
+/// we know that this won't panic in production.
 const LIST_PRINCIPALS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
     ListTypeData::new_list(TypeSignature::PrincipalType, MAX_STAKERS_LENGTH as u32).unwrap()
 });
@@ -69,8 +69,7 @@ pub struct StacksTxPostConditions {
     pub post_conditions: Vec<TransactionPostCondition>,
 }
 
-/// A trait to ease construction of a StacksTransaction making sBTC related
-/// contract calls.
+/// A trait to ease construction of a contract call StacksTransaction.
 pub trait AsContractCall {
     /// The name of the clarity smart contract that relates to this struct.
     const CONTRACT_NAME: &'static str;

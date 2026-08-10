@@ -119,7 +119,9 @@ pub enum Error {
     #[error("response from stacks node did not conform to the expected schema: {0}")]
     UnexpectedStacksResponse(#[source] reqwest::Error),
 
-    /// Reqwest error
+    /// This variant is for when the clarity principal returned from our
+    /// read-only call for the signer manager is not a qualitfied contract
+    /// identifier.
     #[error("The clarity principal was not a smart contract principal: {0}")]
     UnexpectedPrincipal(clarity::vm::Value),
 
