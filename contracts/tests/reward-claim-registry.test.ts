@@ -133,6 +133,17 @@ function settlement(staker: string, requestIds: bigint[]) {
   });
 }
 
+/** Expected `ok` payload from `get-pending-settlements`: `{ rows, next }`. */
+function pendingSettlementsPage(
+  rows: ReturnType<typeof settlement>[],
+  next: ClarityValue = Cl.none(),
+) {
+  return Cl.tuple({
+    rows: Cl.list(rows),
+    next,
+  });
+}
+
 /** Register an STX-stake position and mine until its first claim is pending. */
 function registerStxAndAdvance(staker: string, fee: bigint, sender = staker) {
   const result = registerForClaims(staker, fee, sender, SIGNER_MANAGER, STX_START, true);
@@ -487,7 +498,8 @@ describe("cancel-registration", () => {
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
 
     expect(processRewardClaim(wallet2, wallet2, SIGNER_MANAGER).result).toBeOk(Cl.some(Cl.uint(1)));
-    expect(getPendingSettlements()).toBeOk(Cl.list([settlement(wallet2, [1n])]));
+    // Still pending in sbtc-registry (status none): not settleable yet.
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
 
     expect(
       simnet.callPublicFn(
@@ -498,9 +510,10 @@ describe("cancel-registration", () => {
       ).result,
     ).toBeOk(Cl.uint(2n * FEE_PER_CLAIM));
     expect(getRegistration(wallet2, SIGNER_MANAGER)).toBeNone();
-    expect(getPendingSettlements()).toBeOk(Cl.list([settlement(wallet2, [1n])]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
 
     acceptWithdrawal(1n, 30n);
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([settlement(wallet2, [1n])]));
     expect(
       simnet.callPublicFn(
         "reward-claim-registry",
@@ -509,7 +522,7 @@ describe("cancel-registration", () => {
         wallet3,
       ).result,
     ).toBeOk(Cl.bool(true));
-    expect(getPendingSettlements()).toBeOk(Cl.list([]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
   });
 });
 
@@ -993,32 +1006,46 @@ describe("L1 withdrawal path + settlements", () => {
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
   });
 
-  it("records a withdrawal request-id and lists it as a pending settlement", () => {
+  it("tracks a withdrawal, which is pending if accepted in the sbtc-registry", () => {
     const { result } = processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
     expect(result).toBeOk(Cl.some(Cl.uint(1)));
-    expect(getPendingSettlements()).toBeOk(Cl.list([settlement(wallet1, [1n])]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
+
+    acceptWithdrawal(1n, 30n);
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([settlement(wallet1, [1n])]));
+  });
+
+  it("tracks a withdrawal, which is pending if rejected in the sbtc-registry", () => {
+    const { result } = processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
+    expect(result).toBeOk(Cl.some(Cl.uint(1)));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
+
+    rejectWithdrawal(1n);
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([settlement(wallet1, [1n])]));
   });
 
   it("settles an ACCEPTED withdrawal and clears it from the settlement list", () => {
     processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
     acceptWithdrawal(1n, 30n);
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([settlement(wallet1, [1n])]));
     const { result } = settlePendingWithdrawal(wallet1, 1n, wallet2);
     expect(result).toBeOk(Cl.bool(true));
-    expect(getPendingSettlements()).toBeOk(Cl.list([]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
   });
 
   it("settles a REJECTED withdrawal (reclaims to the staker) and clears it", () => {
     processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
     rejectWithdrawal(1n);
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([settlement(wallet1, [1n])]));
     const { result } = settlePendingWithdrawal(wallet1, 1n, wallet2);
     expect(result).toBeOk(Cl.bool(true));
-    expect(getPendingSettlements()).toBeOk(Cl.list([]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
   });
 
   it("is a no-op while the withdrawal is still pending", () => {
     processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
     expect(settlePendingWithdrawal(wallet1, 1n, wallet2).result).toBeOk(Cl.bool(false));
-    expect(getPendingSettlements()).toBeOk(Cl.list([settlement(wallet1, [1n])]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
   });
 
   it("errors on an unknown pending withdrawal", () => {
@@ -1031,6 +1058,7 @@ describe("L1 withdrawal path + settlements", () => {
   it("batch settle-pending-withdrawals resolves accepted items and counts them", () => {
     processRewardClaim(wallet1, wallet1, SIGNER_MANAGER);
     acceptWithdrawal(1n, 30n);
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([settlement(wallet1, [1n])]));
     const { result } = simnet.callPublicFn(
       "reward-claim-registry",
       "settle-pending-withdrawals",
@@ -1044,8 +1072,147 @@ describe("L1 withdrawal path + settlements", () => {
       wallet2,
     );
     expect(result).toBeOk(Cl.uint(1));
-    expect(getPendingSettlements()).toBeOk(Cl.list([]));
+    expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
   });
+});
+
+describe("get-pending-settlements pagination", () => {
+  it(
+    "paginates past not-yet-settleable withdrawals across >100 stakers (Rust get_all style)",
+    () => {
+      // 150 stakers on pending-withdrawal-ll; 70 of them get a second claim so
+      // there are 220 withdrawal IDs total. 5 not-settleable (status none) in
+      // [0,100) and 5 in [100,150). PENDING_TICKS=100, so two pages of rows:
+      // 95 + 45 settleable staker rows.
+      const TOTAL_STAKERS = 150;
+      const DUAL_CLAIM_COUNT = 70; // 150 + 70 = 220 withdrawal IDs
+      const notSettleable = new Set([10, 30, 50, 70, 90, 110, 130, 140, 145, 149]);
+
+      initPox5();
+      registerSignerManager(SIGNER_PRIVATE_KEY);
+
+      const stakers = Array.from({ length: TOTAL_STAKERS }, (_, i) => {
+        const hex = (BigInt(i) + 1n).toString(16).padStart(64, "0") + "01";
+        return privateKeyToAddress(hex, "testnet");
+      });
+
+      for (let i = 0; i < TOTAL_STAKERS; i++) {
+        const staker = stakers[i]!;
+        expect(
+          simnet.transferSTX(SIGNER_SET_MIN_USTX + 1_000_000n, staker, deployer).result,
+        ).toBeOk(Cl.bool(true));
+        stakeWithPoxAddr(staker, SIGNER_SET_MIN_USTX, 6n, 100n);
+        expect(
+          registerForClaims(
+            staker,
+            3n * FEE_PER_CLAIM,
+            deployer,
+            SIGNER_MANAGER,
+            STX_START,
+            true,
+          ).result,
+        ).toBeOk(Cl.uint(3));
+      }
+
+      fundAndClaimSignerRewards(500_000n, 1n);
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      const idsByStaker = new Map<string, bigint[]>();
+      const readWithdrawalId = (result: ClarityValue): bigint => {
+        const json = cvToJSON(result) as {
+          success: boolean;
+          value: { value: { value: string } };
+        };
+        expect(json.success).toBe(true);
+        return BigInt(json.value.value.value);
+      };
+
+      for (const staker of stakers) {
+        const { result } = processRewardClaim(staker, deployer, SIGNER_MANAGER);
+        idsByStaker.set(staker, [readWithdrawalId(result)]);
+      }
+
+      fundAndClaimSignerRewards(500_000n, 2n);
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST + 2n);
+
+      for (let i = 0; i < DUAL_CLAIM_COUNT; i++) {
+        const staker = stakers[i]!;
+        const { result } = processRewardClaim(staker, deployer, SIGNER_MANAGER);
+        idsByStaker.get(staker)!.push(readWithdrawalId(result));
+      }
+
+      const allIds = [...idsByStaker.values()].flat();
+      expect(allIds).toHaveLength(220);
+      expect(new Set(allIds).size).toBe(220);
+
+      // Make every id settleable except those belonging to notSettleable stakers.
+      for (let i = 0; i < TOTAL_STAKERS; i++) {
+        if (notSettleable.has(i)) continue;
+        for (const id of idsByStaker.get(stakers[i]!)!) {
+          expect(rejectWithdrawal(id).result).toBeOk(Cl.bool(true));
+        }
+      }
+
+      const expectedStakers = stakers.filter((_, i) => !notSettleable.has(i));
+      expect(expectedStakers).toHaveLength(140);
+      const notSettleableStakers = new Set(
+        [...notSettleable].map((i) => stakers[i]!),
+      );
+
+      const allRows: Array<{ staker: string; requestIds: string[] }> = [];
+      let cursor: OptionalCV = Cl.none();
+      const pageSizes: number[] = [];
+      for (let guard = 0; guard < 10; guard++) {
+        const json = cvToJSON(getPendingSettlements(cursor));
+        expect(json.success).toBe(true);
+        const page = json.value.value as {
+          rows: {
+            value: Array<{
+              value: {
+                staker: { value: string };
+                "request-ids": { value: Array<{ value: string }> };
+              };
+            }>;
+          };
+          next: {
+            value: null | {
+              value: { staker: { value: string }; "signer-manager": { value: string } };
+            };
+          };
+        };
+
+        pageSizes.push(page.rows.value.length);
+        for (const row of page.rows.value) {
+          const staker = row.value.staker.value;
+          expect(notSettleableStakers.has(staker)).toBe(false);
+          const requestIds = row.value["request-ids"].value.map((id) => id.value);
+          expect(requestIds.length).toBeGreaterThan(0);
+          allRows.push({ staker, requestIds });
+        }
+
+        if (page.next.value === null) {
+          break;
+        }
+        const nextKey = page.next.value.value;
+        cursor = Cl.some(
+          Cl.tuple({
+            staker: Cl.principal(nextKey.staker.value),
+            "signer-manager": Cl.principal(nextKey["signer-manager"].value),
+          }),
+        );
+      }
+
+      expect(pageSizes).toEqual([95, 45]);
+      expect(allRows.map((row) => row.staker)).toEqual(expectedStakers);
+
+      const listedIds = allRows.flatMap((row) => row.requestIds.map((id) => BigInt(id)));
+      const expectedIds = expectedStakers.flatMap((staker) => idsByStaker.get(staker)!);
+      expect(listedIds.sort((a, b) => (a < b ? -1 : 1))).toEqual(
+        [...expectedIds].sort((a, b) => (a < b ? -1 : 1)),
+      );
+    },
+    300_000,
+  );
 });
 
 // Schedule / advance invariants. Several STX boundary cases are already

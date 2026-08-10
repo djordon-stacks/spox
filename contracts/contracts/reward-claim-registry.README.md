@@ -19,5 +19,6 @@ Permissionless keeper contract that registers PoX-5 stakers for automated reward
 - Registration requires a **live** pox-5 stake under that signer-manager; bond-index is looked up, not passed.
 - Empty / failed claims still burn a claim installment from escrow.
 - Only the staker may `cancel-registration` (admins cannot cancel for them). Remaining `prepaid-ustx` is refunded to the staker; pending L1 withdrawals remain settleable.
-- Pending L1 withdrawals are capped at 192 per registration; settlement is a separate permissionless step after sBTC accept/reject.
+- Pending L1 withdrawals are capped at `MAX_PENDING_WITHDRAWALS` 64 per registration; settlement is a separate permissionless step after sBTC accept/reject.
 - `get-pending-claims` may return an empty `rows` list while `next` is still set. Paginate with `next` until it is `none`.
+- `get-pending-settlements` may return an empty `rows`, however, that does not mean the walk finished. Paginate with `next` until it is `next` is `none`.
