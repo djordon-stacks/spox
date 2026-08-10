@@ -25,20 +25,20 @@ use crate::stacks::reward_claim_registry::ProcessRewardClaimsBatch;
 
 /// The type signature for the list of 100 stakers.
 ///
-/// ListTypeData::new_list only returns an Err when max size of a value
-/// with this type could be greater than 1 MiB, or if the type depth is
-/// greater than 32. Our type depth is 1 and the max size is 148 * 100
-/// + 6, well under 1 MiB. We also have a test that exercises this path so
-/// we know that this won't panic in production.
-const LIST_PRINCIPALS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
+/// ListTypeData::new_list only returns an Err when max size of the type
+/// could be greater than 1 MiB, or if the type depth is greater than 32.
+/// Our type depth is 1 and the max size is 148 * 100 + 6 bytes, well under
+/// 1 MiB. We also have a test that exercises this path so we know that
+/// this won't panic in production.
+static LIST_PRINCIPALS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
     ListTypeData::new_list(TypeSignature::PrincipalType, MAX_STAKERS_LENGTH as u32).unwrap()
 });
 
 /// The name of the trait that signer managers must implement.
-const REWARD_CLAIM_TRAIT_NAME: &'static str = "reward-claim-signer-manager-trait";
+const REWARD_CLAIM_TRAIT_NAME: &str = "reward-claim-signer-manager-trait";
 
 /// The name of the contract that contains the signer manager trait.
-const REWARD_CLAIM_TRAIT_CONTRACT: &'static str = "reward-claim-traits";
+const REWARD_CLAIM_TRAIT_CONTRACT: &str = "reward-claim-traits";
 
 /// This function creates a Trait identifier for the
 /// [`REWARD_CLAIM_TRAIT_NAME`] trait, once we know the issuer/deployer.
@@ -46,8 +46,12 @@ fn make_trait_identifier(deployer: StacksAddress) -> TraitIdentifier {
     TraitIdentifier {
         name: ClarityName::from(REWARD_CLAIM_TRAIT_NAME),
         contract_identifier: QualifiedContractIdentifier {
-            name: ContractName::try_from(REWARD_CLAIM_TRAIT_CONTRACT).unwrap(),
             issuer: StandardPrincipalData::from(deployer),
+            // The following From::from call is more dangerous than it
+            // appears. Under the hood it calls its TryFrom::try_from
+            // implementation and then unwrap them. We check that this
+            // is fine in our test.
+            name: ContractName::from(REWARD_CLAIM_TRAIT_CONTRACT),
         },
     }
 }
