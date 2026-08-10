@@ -81,9 +81,9 @@ impl StacksWallet {
         self.nonce.store(value, Ordering::Relaxed);
     }
 
-    /// Set the next nonce to the provided value.
-    pub fn get_nonce(&self) -> u64 {
-        self.nonce.load(Ordering::Relaxed)
+    /// Increment the wallet nonce by 1.
+    pub fn increment_nonce(&self) {
+        self.nonce.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Build an unsigned single-sig spending condition and advance the local nonce.
@@ -92,7 +92,7 @@ impl StacksWallet {
     pub fn as_unsigned_tx_auth(&self, tx_fee: u64) -> SinglesigSpendingCondition {
         SinglesigSpendingCondition {
             signer: self.address.bytes().clone(),
-            nonce: self.get_nonce(),
+            nonce: self.nonce.load(Ordering::Relaxed),
             tx_fee,
             hash_mode: SinglesigHashMode::P2PKH,
             key_encoding: TransactionPublicKeyEncoding::Compressed,
@@ -216,16 +216,16 @@ mod tests {
     }
 
     #[test]
-    fn as_unsigned_tx_auth_increments_nonce() {
+    fn as_unsigned_tx_auth_uses_current_nonce_without_incrementing() {
         let wallet = StacksWallet::new(test_secret_key(), CHAIN_ID_TESTNET, 7);
 
         let auth0 = wallet.as_unsigned_tx_auth(1000);
         assert_eq!(auth0.nonce, 7);
-        assert_eq!(wallet.nonce(), 8);
+        assert_eq!(wallet.nonce(), 7);
 
         let auth1 = wallet.as_unsigned_tx_auth(1000);
-        assert_eq!(auth1.nonce, 8);
-        assert_eq!(wallet.nonce(), 9);
+        assert_eq!(auth1.nonce, 7);
+        assert_eq!(wallet.nonce(), 7);
     }
 
     #[test]
@@ -236,7 +236,7 @@ mod tests {
         let tx = wallet.sign_tx(payload, 1000);
         assert!(tx.verify().is_ok());
         assert_eq!(tx.chain_id, CHAIN_ID_TESTNET);
-        assert_eq!(wallet.nonce(), 1);
+        assert_eq!(wallet.nonce(), 0);
     }
 
     #[test]
@@ -247,7 +247,18 @@ mod tests {
 
         let auth = wallet.as_unsigned_tx_auth(1);
         assert_eq!(auth.nonce, 42);
-        assert_eq!(wallet.nonce(), 43);
+        assert_eq!(wallet.nonce(), 42);
+    }
+
+    #[test]
+    fn increment_nonce_advances_counter() {
+        let wallet = StacksWallet::new(test_secret_key(), CHAIN_ID_TESTNET, 7);
+        wallet.increment_nonce();
+        assert_eq!(wallet.nonce(), 8);
+
+        let auth = wallet.as_unsigned_tx_auth(1000);
+        assert_eq!(auth.nonce, 8);
+        assert_eq!(wallet.nonce(), 8);
     }
 
     #[test]

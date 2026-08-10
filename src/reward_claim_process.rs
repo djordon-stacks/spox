@@ -9,6 +9,7 @@
 //! monitoring (see `main`).
 
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 use crate::bitcoin::BlockRef;
 use crate::config::Settings;
@@ -72,20 +73,26 @@ pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Co
 /// 2. Submits a process-reward-claims contract call for each batch of
 ///    claims, where a batch is a group of at most 100 stakers who are
 ///    associated with the same signer-manager.
+#[instrument(skip(state))]
 async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Result<(), Error> {
     let batches = state.registry.get_pending_claim_batches().await?;
     if batches.is_empty() {
-        tracing::debug!(%chain_tip, "no pending reward claims");
+        tracing::info!("no pending reward claims");
         return Ok(());
     }
 
     for batch in batches {
+        tracing::info!(
+            "signer_manager" = %batch.signer_manager(),
+            "num_stakers" = %batch.stakers().len(),
+            "processing process-reward-claims batch",
+        );
         let payload = batch.tx_payload();
         let tx = state.wallet.sign_tx(payload, TX_FEE);
 
         match state.client().submit_tx(&tx).await {
             Ok(SubmitTxResponse::Acceptance(txid)) => {
-                tracing::debug!(%txid, "submitted process-reward-claims batch");
+                tracing::info!(%txid, "submitted process-reward-claims batch");
                 state.increment_wallet_nonce();
             }
             Ok(SubmitTxResponse::Rejection(error)) => {
@@ -164,8 +171,7 @@ impl RewardClaimState {
 
     /// Increment the wallet nonce by 1.
     pub fn increment_wallet_nonce(&self) {
-        let nonce = self.wallet.get_nonce();
-        self.wallet.set_nonce(nonce.saturating_add(1));
+        self.wallet.increment_nonce();
     }
 
     /// Get a reference to the client.
