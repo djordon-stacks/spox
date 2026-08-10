@@ -189,7 +189,8 @@ impl RewardClaimRegistry {
         let mut all = Vec::new();
         let mut cursor: Option<RegistrationKey> = None;
 
-        let chain_tip = Some(&self.client.get_node_info().await?.chain_tip());
+        let tip = self.client.get_node_info().await?.chain_tip();
+        let chain_tip = Some(&tip);
 
         loop {
             let page = self.get_pending_claims(cursor.as_ref(), chain_tip).await?;
@@ -305,6 +306,8 @@ impl TryFrom<ClarityValue> for PendingClaimsPage {
 #[cfg(test)]
 mod tests {
     use bitcoincore_rpc::jsonrpc::serde_json;
+    use clarity::types::chainstate::BlockHeaderHash;
+    use clarity::types::chainstate::ConsensusHash;
     use clarity::vm::types::OptionalData;
 
     use super::*;
@@ -501,7 +504,10 @@ mod tests {
             client,
         );
 
-        let result = registry.get_pending_claims(Some(&cursor), None).await.unwrap();
+        let result = registry
+            .get_pending_claims(Some(&cursor), None)
+            .await
+            .unwrap();
 
         assert_eq!(
             result,
@@ -573,11 +579,34 @@ mod tests {
             .serialize_to_hex()
             .unwrap();
 
+        let stacks_tip = "b5f9aa4423ffa7abb585fc00e2783c40225597ec112ee618db86ae23dbbbe88c";
+        let stacks_tip_consensus_hash = "dfe87cfd31c1a67fa8b989c83b79aa476e616758";
+        let tip = StacksBlockId::new(
+            &ConsensusHash::from_hex(stacks_tip_consensus_hash).unwrap(),
+            &BlockHeaderHash::from_hex(stacks_tip).unwrap(),
+        );
+
         let mut stacks_node_server = mockito::Server::new_async().await;
-        let path = "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest";
+        let info_mock = stacks_node_server
+            .mock("GET", "/v2/info")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{
+                    "network_id": 2147483648,
+                    "stacks_tip": "{stacks_tip}",
+                    "stacks_tip_consensus_hash": "{stacks_tip_consensus_hash}"
+                }}"#
+            ))
+            .expect(1)
+            .create();
+
+        let path = format!(
+            "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip={tip}"
+        );
 
         let empty_with_next = stacks_node_server
-            .mock("POST", path)
+            .mock("POST", path.as_str())
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [ClarityValue::none().serialize_to_hex().unwrap()]
             })))
@@ -591,7 +620,7 @@ mod tests {
             .create();
 
         let pending_then_done = stacks_node_server
-            .mock("POST", path)
+            .mock("POST", path.as_str())
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [skipped_hex]
             })))
@@ -620,6 +649,7 @@ mod tests {
         let result = registry.get_all_pending_claims().await.unwrap();
 
         assert_eq!(result, vec![pending]);
+        info_mock.assert();
         empty_with_next.assert();
         pending_then_done.assert();
     }
