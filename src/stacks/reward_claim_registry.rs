@@ -187,8 +187,8 @@ impl RewardClaimRegistry {
         let mut cursor: Option<RegistrationKey> = None;
 
         loop {
-            let mut page = self.get_pending_claims(cursor.as_ref()).await?;
-            all.append(&mut page.claims);
+            let page = self.get_pending_claims(cursor.as_ref()).await?;
+            all.extend(page.claims);
             match page.next {
                 Some(next) => cursor = Some(next),
                 None => break,
