@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use clarity::types::chainstate::StacksAddress;
+use clarity::types::chainstate::StacksBlockId;
 use clarity::vm::ClarityName;
 use clarity::vm::ContractName;
 use clarity::vm::Value as ClarityValue;
@@ -140,6 +141,7 @@ impl RewardClaimRegistry {
     async fn get_pending_claims(
         &self,
         cursor: Option<&RegistrationKey>,
+        chain_tip: Option<&StacksBlockId>,
     ) -> Result<PendingClaimsPage, Error> {
         let cursor_arg = match cursor {
             Some(key) => {
@@ -169,6 +171,7 @@ impl RewardClaimRegistry {
                 &ClarityName::from("get-pending-claims"),
                 &self.deployer,
                 &[cursor_arg],
+                chain_tip,
             )
             .await?;
 
@@ -186,8 +189,10 @@ impl RewardClaimRegistry {
         let mut all = Vec::new();
         let mut cursor: Option<RegistrationKey> = None;
 
+        let chain_tip = Some(&self.client.get_node_info().await?.chain_tip());
+
         loop {
-            let page = self.get_pending_claims(cursor.as_ref()).await?;
+            let page = self.get_pending_claims(cursor.as_ref(), chain_tip).await?;
             all.extend(page.claims);
             match page.next {
                 Some(next) => cursor = Some(next),
@@ -428,7 +433,7 @@ mod tests {
             client,
         );
 
-        let result = registry.get_pending_claims(None).await.unwrap();
+        let result = registry.get_pending_claims(None, None).await.unwrap();
 
         assert_eq!(
             result,
@@ -496,7 +501,7 @@ mod tests {
             client,
         );
 
-        let result = registry.get_pending_claims(Some(&cursor)).await.unwrap();
+        let result = registry.get_pending_claims(Some(&cursor), None).await.unwrap();
 
         assert_eq!(
             result,
@@ -538,7 +543,7 @@ mod tests {
             client,
         );
 
-        let result = registry.get_pending_claims(None).await.unwrap();
+        let result = registry.get_pending_claims(None, None).await.unwrap();
 
         assert_eq!(result, PendingClaimsPage { claims: vec![], next: None });
         mock.assert();

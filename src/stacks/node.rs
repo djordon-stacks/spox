@@ -10,6 +10,7 @@ use blockstack_lib::codec::StacksMessageCodec as _;
 use clarity::types::chainstate::BlockHeaderHash;
 use clarity::types::chainstate::ConsensusHash;
 use clarity::types::chainstate::StacksAddress;
+use clarity::types::chainstate::StacksBlockId;
 use clarity::vm::types::{BuffData, SequenceData};
 use clarity::vm::{ClarityName, ContractName, Value};
 use reqwest::header::CONTENT_LENGTH;
@@ -130,6 +131,13 @@ pub struct NodeInfo {
     pub stacks_tip_consensus_hash: ConsensusHash,
 }
 
+impl NodeInfo {
+    /// Create a new [`StacksBlockId`] from the node info.
+    pub fn chain_tip(&self) -> StacksBlockId {
+        StacksBlockId::new(&self.stacks_tip_consensus_hash, &self.stacks_tip)
+    }
+}
+
 /// Helper function for converting a hexadecimal string into an integer.
 fn parse_hex_u128(hex: &str) -> Result<u128, Error> {
     let hex_str = hex.trim_start_matches("0x");
@@ -221,9 +229,13 @@ impl StacksClient {
         fn_name: &ClarityName,
         sender: &StacksAddress,
         arguments: &[Value],
+        chain_tip: Option<&StacksBlockId>,
     ) -> Result<Value, Error> {
+        let tip = chain_tip
+            .map(|tip| tip.to_string())
+            .unwrap_or_else(|| "latest".to_string());
         let path = format!(
-            "/v2/contracts/call-read/{contract_principal}/{contract_name}/{fn_name}?tip=latest"
+            "/v2/contracts/call-read/{contract_principal}/{contract_name}/{fn_name}?tip={tip}"
         );
 
         let url = self
