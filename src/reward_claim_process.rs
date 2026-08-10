@@ -8,11 +8,20 @@
 //! Run via [`crate::dispatch::run_on_chain_tips`] alongside deposit
 //! monitoring (see `main`).
 
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::bitcoin::BlockRef;
 use crate::context::Context;
 use crate::error::Error;
+use crate::stacks::node::{StacksClient, SubmitTxResponse};
+use crate::stacks::reward_claim_registry::RewardClaimRegistry;
+use crate::stacks::transaction::AsContractCall as _;
+
+/// The transaction fee for all contract call transactions against the
+/// registry.
+const TX_FEE: u64 = 100000;
 
 /// The loop for processing reward claims that runs whenever a new Bitcoin
 /// block is detected.
@@ -42,9 +51,39 @@ pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Co
 /// 2. Submits a process-reward-claims contract call for each batch of
 ///    claims, where a batch is a group of at most 100 stakers who are
 ///    associated with the same signer-manager.
-async fn process_pending_claims(_: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
-    // TODO(#41/#42): fetch pending claims and submit process-reward-claims.
-    tracing::debug!(%chain_tip, "reward claim processing not yet implemented");
+async fn process_pending_claims(context: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
+    let settings = context.settings();
+    let Some(registry_config) = settings.reward_claims.as_ref() else {
+        tracing::info!("reward claims are not configured, skipping");
+        return Ok(());
+    };
+
+    let client = Arc::new(StacksClient::try_from(settings)?);
+
+    let registry =
+        RewardClaimRegistry::new(registry_config.claims_contract.clone(), client.clone());
+    let batches = registry.get_pending_claim_batches().await?;
+
+    let wallet = context.wallet().await?;
+    let account = client.get_account(wallet.address()).await?;
+    wallet.set_nonce(account.nonce);
+
+    for batch in batches {
+        let payload = batch.tx_payload();
+        let tx = wallet.sign_tx(payload, TX_FEE);
+
+        match client.submit_tx(&tx).await {
+            Ok(SubmitTxResponse::Acceptance(txid)) => {
+                tracing::debug!(%txid, "submitted process-reward-claims batch")
+            }
+            Ok(SubmitTxResponse::Rejection(error)) => {
+                tracing::warn!(%error, "failed to submit process-reward-claims batch")
+            }
+            Err(error) => tracing::warn!(%error, "failed to submit process-reward-claims batch"),
+        };
+    }
+
+    tracing::debug!(%chain_tip, "submitted process-reward-claims batches");
     Ok(())
 }
 

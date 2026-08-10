@@ -1,5 +1,8 @@
 //! Client for the on-chain reward claim registry.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use clarity::types::chainstate::StacksAddress;
 use clarity::vm::ClarityName;
 use clarity::vm::ContractName;
@@ -63,37 +66,63 @@ pub struct PendingClaimsPage {
 /// Arguments for one `process-reward-claims` contract call.
 ///
 /// All [`Self::stakers`] share [`Self::signer_manager`], and the list
-/// length is at most [`MAX_STAKERS_LENGTH`]. (TODO: enforce this at
-/// construction time)
+/// length is at most [`MAX_STAKERS_LENGTH`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProcessRewardClaimsBatch {
+pub struct RewardClaimsBatch {
     /// Signer-manager trait principal passed to `process-reward-claims`.
-    pub signer_manager: QualifiedContractIdentifier,
+    signer_manager: QualifiedContractIdentifier,
     /// Staker principals to claim for in this call (1..=100).
-    pub stakers: Vec<PrincipalData>,
+    stakers: Vec<PrincipalData>,
     /// The address that deployed the rewards claim registry.
-    pub deployer: StacksAddress,
+    deployer: StacksAddress,
+}
+
+impl RewardClaimsBatch {
+    /// Create a new dummy reward claims batch.
+    #[cfg(test)]
+    pub fn dummy() -> Self {
+        Self {
+            signer_manager: QualifiedContractIdentifier::transient(),
+            stakers: vec![PrincipalData::from(StacksAddress::burn_address(false))].to_vec(),
+            deployer: StacksAddress::burn_address(false),
+        }
+    }
+
+    /// The signer-manager principal passed to `process-reward-claims`.
+    pub fn signer_manager(&self) -> &QualifiedContractIdentifier {
+        &self.signer_manager
+    }
+
+    /// The stakers to claim for in this call.
+    pub fn stakers(&self) -> &[PrincipalData] {
+        &self.stakers
+    }
+
+    /// The address that deployed the rewards claim registry.
+    pub fn deployer(&self) -> &StacksAddress {
+        &self.deployer
+    }
 }
 
 /// Client for querying the on-chain reward claim registry contract.
 #[derive(Debug, Clone)]
 pub struct RewardClaimRegistry {
     /// The deployer of the registry smart contract.
-    contract_principal: StacksAddress,
+    deployer: StacksAddress,
     /// The name of the registry smart contract.
     contract_name: ContractName,
     /// The client used to make the requests.
-    client: StacksClient,
+    client: Arc<StacksClient>,
 }
 
 impl RewardClaimRegistry {
     /// Create a new reward claim registry client.
-    pub fn new(contract: QualifiedContractIdentifier, client: StacksClient) -> Self {
-        let contract_principal = contract.issuer.into();
+    pub fn new(contract: QualifiedContractIdentifier, client: Arc<StacksClient>) -> Self {
+        let deployer = contract.issuer.into();
 
         Self {
             contract_name: contract.name,
-            contract_principal,
+            deployer,
             client,
         }
     }
@@ -104,7 +133,7 @@ impl RewardClaimRegistry {
     /// linked list. To paginate, pass [`PendingClaimsPage::next`] from the
     /// previous page. `next == None` means the walk reached the tail; an
     /// empty `claims` list alone does not.
-    pub async fn get_pending_claims(
+    async fn get_pending_claims(
         &self,
         cursor: Option<&RegistrationKey>,
     ) -> Result<PendingClaimsPage, Error> {
@@ -131,10 +160,10 @@ impl RewardClaimRegistry {
         let result = self
             .client
             .call_read(
-                &self.contract_principal,
+                &self.deployer,
                 &self.contract_name,
                 &ClarityName::from("get-pending-claims"),
-                &self.contract_principal,
+                &self.deployer,
                 &[cursor_arg],
             )
             .await?;
@@ -148,15 +177,14 @@ impl RewardClaimRegistry {
 
     /// Fetch every pending claim by paging through `get-pending-claims`.
     ///
-    /// Continues while the page's `next` cursor is `Some`, including pages
-    /// that return no rows (ticks spent on non-pending registrations).
-    pub async fn get_all_pending_claims(&self) -> Result<Vec<PendingClaim>, Error> {
+    /// Continues while the page's `next` cursor is `Some`.
+    async fn get_all_pending_claims(&self) -> Result<Vec<PendingClaim>, Error> {
         let mut all = Vec::new();
         let mut cursor: Option<RegistrationKey> = None;
 
         loop {
-            let page = self.get_pending_claims(cursor.as_ref()).await?;
-            all.extend(page.claims);
+            let mut page = self.get_pending_claims(cursor.as_ref()).await?;
+            all.append(&mut page.claims);
             match page.next {
                 Some(next) => cursor = Some(next),
                 None => break,
@@ -164,6 +192,33 @@ impl RewardClaimRegistry {
         }
 
         Ok(all)
+    }
+
+    /// Get all pending claims, batched by signer manager, with chunks of
+    /// at most [`MAX_STAKERS_LENGTH`] stakers per batch.
+    pub async fn get_pending_claim_batches(&self) -> Result<Vec<RewardClaimsBatch>, Error> {
+        let claims = self.get_all_pending_claims().await?;
+
+        let mut groups: HashMap<QualifiedContractIdentifier, Vec<PrincipalData>> = HashMap::new();
+
+        for claim in claims {
+            groups
+                .entry(claim.signer_manager)
+                .or_default()
+                .push(claim.staker);
+        }
+
+        let mut batches = Vec::new();
+        for (signer_manager, stakers) in groups {
+            for chunk in stakers.chunks(MAX_STAKERS_LENGTH) {
+                batches.push(RewardClaimsBatch {
+                    signer_manager: signer_manager.clone(),
+                    stakers: chunk.to_vec(),
+                    deployer: self.deployer.clone(),
+                });
+            }
+        }
+        Ok(batches)
     }
 }
 
@@ -339,7 +394,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = Arc::new(StacksClient::new(client_url).unwrap());
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
@@ -407,7 +462,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = Arc::new(StacksClient::new(client_url).unwrap());
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
@@ -449,7 +504,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = Arc::new(StacksClient::new(client_url).unwrap());
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
@@ -523,7 +578,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = Arc::new(StacksClient::new(client_url).unwrap());
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
