@@ -76,9 +76,14 @@ impl StacksWallet {
         self.chain_id == CHAIN_ID_MAINNET
     }
 
-    /// Set the next nonce to the provided value (typically from `get_account`).
+    /// Set the next nonce to the provided value.
     pub fn set_nonce(&self, value: u64) {
         self.nonce.store(value, Ordering::Relaxed);
+    }
+
+    /// Get the next nonce for the wallet.
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce.load(Ordering::Relaxed)
     }
 
     /// Build an unsigned single-sig spending condition and advance the local nonce.

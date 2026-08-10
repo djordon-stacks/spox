@@ -1,7 +1,6 @@
 //! Client for the on-chain reward claim registry.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use clarity::types::chainstate::StacksAddress;
 use clarity::vm::ClarityName;
@@ -112,12 +111,12 @@ pub struct RewardClaimRegistry {
     /// The name of the registry smart contract.
     contract_name: ContractName,
     /// The client used to make the requests.
-    client: Arc<StacksClient>,
+    client: StacksClient,
 }
 
 impl RewardClaimRegistry {
     /// Create a new reward claim registry client.
-    pub fn new(contract: QualifiedContractIdentifier, client: Arc<StacksClient>) -> Self {
+    pub fn new(contract: QualifiedContractIdentifier, client: StacksClient) -> Self {
         let deployer = contract.issuer.into();
 
         Self {
@@ -125,6 +124,11 @@ impl RewardClaimRegistry {
             deployer,
             client,
         }
+    }
+
+    /// Get a reference to the client.
+    pub fn client(&self) -> &StacksClient {
+        &self.client
     }
 
     /// Fetch a page of pending claims from the registry.
@@ -218,6 +222,7 @@ impl RewardClaimRegistry {
                 });
             }
         }
+
         Ok(batches)
     }
 }
@@ -394,7 +399,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = Arc::new(StacksClient::new(client_url).unwrap());
+        let client = StacksClient::new(client_url).unwrap();
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
@@ -462,7 +467,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = Arc::new(StacksClient::new(client_url).unwrap());
+        let client = StacksClient::new(client_url).unwrap();
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
@@ -504,7 +509,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = Arc::new(StacksClient::new(client_url).unwrap());
+        let client = StacksClient::new(client_url).unwrap();
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
@@ -578,7 +583,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = Arc::new(StacksClient::new(client_url).unwrap());
+        let client = StacksClient::new(client_url).unwrap();
 
         let registry = RewardClaimRegistry::new(
             QualifiedContractIdentifier::parse(
