@@ -8,19 +8,21 @@
 //! Run via [`crate::dispatch::run_on_chain_tips`] alongside deposit
 //! monitoring (see `main`).
 
-use std::sync::Arc;
-
 use tokio::sync::mpsc;
 
 use crate::bitcoin::BlockRef;
+use crate::config::Settings;
 use crate::context::Context;
 use crate::error::Error;
-use crate::stacks::node::{StacksClient, SubmitTxResponse};
+use crate::stacks::node::StacksClient;
+use crate::stacks::node::SubmitTxResponse;
 use crate::stacks::reward_claim_registry::RewardClaimRegistry;
 use crate::stacks::transaction::AsContractCall as _;
+use crate::stacks::wallet::StacksWallet;
 
 /// The transaction fee for all contract call transactions against the
 /// registry.
+/// TODO: remove and fetch the market fee rate from the node.
 const TX_FEE: u64 = 100000;
 
 /// The loop for processing reward claims that runs whenever a new Bitcoin
@@ -31,12 +33,31 @@ pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Co
         return;
     }
 
+    let state = match RewardClaimState::new(context.settings()).await {
+        Ok(claims) => claims,
+        Err(error) => {
+            tracing::error!(%error, "failed to initialize reward claims process");
+            return;
+        }
+    };
+
     while let Some(chain_tip) = rx.recv().await {
-        if let Err(error) = process_pending_claims(&context, &chain_tip).await {
+        // We update the wallet nonce before constucting any transactions.
+        // There is a risk that we have transactions in the mempool so
+        // using the fetched nonce will lead to an RBF attempt. This
+        // attempt could fail, because the proposed fee could be too low.
+        // However, with ~10 average bitcoin blocks and prompt stacks
+        // confirmations, this should rarely be an issue.
+        if let Err(error) = state.update_wallet_nonce().await {
+            tracing::warn!(%error, "failed to update wallet nonce");
+            continue;
+        }
+
+        if let Err(error) = process_claims(&state, &chain_tip).await {
             tracing::warn!(%error, "error processing pending reward claims");
         }
 
-        if let Err(error) = process_pending_settlements(&context, &chain_tip).await {
+        if let Err(error) = process_pending_settlements(&chain_tip).await {
             tracing::warn!(%error, "error processing pending settlements");
         }
     }
@@ -51,39 +72,32 @@ pub async fn process_reward_claims(mut rx: mpsc::Receiver<BlockRef>, context: Co
 /// 2. Submits a process-reward-claims contract call for each batch of
 ///    claims, where a batch is a group of at most 100 stakers who are
 ///    associated with the same signer-manager.
-async fn process_pending_claims(context: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
-    let settings = context.settings();
-    let Some(registry_config) = settings.reward_claims.as_ref() else {
-        tracing::info!("reward claims are not configured, skipping");
+async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Result<(), Error> {
+    let batches = state.registry.get_pending_claim_batches().await?;
+    if batches.is_empty() {
+        tracing::debug!(%chain_tip, "no pending reward claims");
         return Ok(());
-    };
-
-    let client = Arc::new(StacksClient::try_from(settings)?);
-
-    let registry =
-        RewardClaimRegistry::new(registry_config.claims_contract.clone(), client.clone());
-    let batches = registry.get_pending_claim_batches().await?;
-
-    let wallet = context.wallet().await?;
-    let account = client.get_account(wallet.address()).await?;
-    wallet.set_nonce(account.nonce);
+    }
 
     for batch in batches {
         let payload = batch.tx_payload();
-        let tx = wallet.sign_tx(payload, TX_FEE);
+        let tx = state.wallet.sign_tx(payload, TX_FEE);
 
-        match client.submit_tx(&tx).await {
+        match state.client().submit_tx(&tx).await {
             Ok(SubmitTxResponse::Acceptance(txid)) => {
-                tracing::debug!(%txid, "submitted process-reward-claims batch")
+                tracing::debug!(%txid, "submitted process-reward-claims batch");
             }
             Ok(SubmitTxResponse::Rejection(error)) => {
-                tracing::warn!(%error, "failed to submit process-reward-claims batch")
+                tracing::warn!(%error, "failed to submit process-reward-claims batch");
+                state.decrement_wallet_nonce();
             }
-            Err(error) => tracing::warn!(%error, "failed to submit process-reward-claims batch"),
-        };
+            Err(error) => {
+                tracing::warn!(%error, "failed to submit process-reward-claims batch");
+            }
+        }
     }
 
-    tracing::debug!(%chain_tip, "submitted process-reward-claims batches");
+    tracing::debug!(%chain_tip, "finished process-reward-claims submissions");
     Ok(())
 }
 
@@ -96,8 +110,62 @@ async fn process_pending_claims(context: &Context, chain_tip: &BlockRef) -> Resu
 /// 2. Submits a settle-pending-withdrawals contract call for each batch of
 ///    settlements, where a batch is a group of at most 100 stakers who are
 ///    associated with the same signer-manager.
-async fn process_pending_settlements(_: &Context, chain_tip: &BlockRef) -> Result<(), Error> {
+async fn process_pending_settlements(chain_tip: &BlockRef) -> Result<(), Error> {
     // TODO(#40/#42): fetch pending settlements and submit settle-pending-withdrawals.
     tracing::debug!(%chain_tip, "reward settlement processing not yet implemented");
     Ok(())
+}
+
+/// The context needed for the reward-claims loop.
+#[derive(Debug)]
+pub struct RewardClaimState {
+    /// The reward-claims registry
+    pub registry: RewardClaimRegistry,
+    /// A wallet for signing Stacks transactions
+    pub wallet: StacksWallet,
+}
+
+impl RewardClaimState {
+    /// Construct a Stacks wallet given the information in the config.
+    ///
+    /// # Note
+    ///
+    /// This function reaches out to the stacks node to get the current
+    /// chain ID.
+    pub async fn new(settings: &Settings) -> Result<Self, Error> {
+        let Some(config) = settings.reward_claims.clone() else {
+            return Err(Error::MissingRewardClaimsConfig);
+        };
+        let Some(stacks) = settings.stacks.as_ref() else {
+            return Err(Error::MissingStacksConfig);
+        };
+
+        // Let's go and get the current chain id.
+        let client = StacksClient::new(stacks.rpc_endpoint.clone())?;
+        let info = client.get_node_info().await?;
+        let wallet = StacksWallet::new(config.private_key, info.chain_id, 0);
+
+        let registry = RewardClaimRegistry::new(config.claims_contract, client);
+
+        Ok(Self { registry, wallet })
+    }
+
+    /// Update the account nonce for the wallet.
+    pub async fn update_wallet_nonce(&self) -> Result<(), Error> {
+        let address = self.wallet.address();
+        let account = self.registry.client().get_account(address).await?;
+        self.wallet.set_nonce(account.nonce);
+        Ok(())
+    }
+
+    /// Decrement the wallet nonce by 1.
+    pub fn decrement_wallet_nonce(&self) {
+        let nonce = self.wallet.get_nonce();
+        self.wallet.set_nonce(nonce.saturating_sub(1));
+    }
+
+    /// Get a reference to the client.
+    pub fn client(&self) -> &StacksClient {
+        self.registry.client()
+    }
 }
