@@ -62,6 +62,9 @@ struct AccountEntryResponse {
 }
 
 /// Account info for a Stacks address.
+///
+/// The actual return type can be found here:
+/// https://github.com/stacks-network/stacks-core/blob/4.0.1/stackslib/src/net/api/getaccount.rs#L34-L46
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountInfo {
     /// The total balance of the account in micro-STX, including locked funds.
@@ -78,7 +81,7 @@ pub struct AccountInfo {
 ///
 /// The fields match the JSON fields returned from a Stacks node and are
 /// defined in:
-/// https://github.com/stacks-network/stacks-core/blob/2.5.0.0.5/docs/rpc-endpoints.md
+/// https://github.com/stacks-network/stacks-core/blob/4.0.1/docs/rpc-endpoints.md
 #[derive(Debug, Deserialize)]
 pub struct TxRejection {
     /// The error message. It should always be the string "transaction
@@ -119,7 +122,9 @@ pub enum SubmitTxResponse {
 /// Subset of the response from `GET /v2/info`.
 ///
 /// Despite the field name, `network_id` is the Stacks chain id used in
-/// transactions.
+/// transactions. This is a slimmed down version of the response containing
+/// only the fields we need, the full response can be seen in:
+/// https://github.com/stacks-network/stacks-core/blob/4.0.1/stackslib/src/net/api/getinfo.rs#L53-L85
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct NodeInfo {
     /// Stacks chain id reported by the node.
