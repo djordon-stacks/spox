@@ -372,6 +372,15 @@ export function getMaliciousLastReenterError() {
   ).result;
 }
 
+export function setMockSettleResult(shouldError: boolean, code = 1001n) {
+  return simnet.callPublicFn(
+    "mock-signer-manager",
+    "set-settle-result",
+    [Cl.bool(shouldError), Cl.uint(code)],
+    deployer,
+  );
+}
+
 export function setMockClaimStakerResult(
   shouldError: boolean,
   code = 1001n,
