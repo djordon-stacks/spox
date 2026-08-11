@@ -15,7 +15,9 @@
 (define-constant ERR_ZERO_FEE (err u604))
 ;; Nothing new to claim yet: next-claim-distribution has not fully elapsed
 (define-constant ERR_ALREADY_CLAIMED (err u605))
-;; Thrown when a key would exceed 64 tracked request-ids.
+;; This is thrown when there are more than 192 pending withdrawals for a
+;; registrant. This should not be reachable during PoX-5, which should not
+;; be around for more than 96 reward cycles.
 (define-constant ERR_TOO_MANY_PENDING (err u606))
 ;; The request-id is not a tracked pending withdrawal for this key
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
@@ -141,7 +143,7 @@
         staker: principal,
         signer-manager: principal,
     }
-    (list 64 uint)
+    (list 192 uint)
 )
 
 (define-map pending-withdrawal-ll
@@ -1060,9 +1062,8 @@
 )
 
 ;; Bookkeeping only. Appends `request-id` to key's pending-withdrawals entry
-;; (append + as-max-len? back to u64), erroring
-;; ERR_TOO_MANY_PENDING if full. Splices key into pending-withdrawal-ll if
-;; this is its first pending item.
+;; (append + as-max-len? back to 192), erroring ERR_TOO_MANY_PENDING if full.
+;; Splices key into pending-withdrawal-ll if this is its first pending item.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (append-pending-withdrawal
@@ -1075,7 +1076,7 @@
     (let (
             (current (default-to (list) (map-get? pending-withdrawals key)))
             (was-empty (is-eq current (list)))
-            (updated (unwrap! (as-max-len? (append current request-id) u64) ERR_TOO_MANY_PENDING))
+            (updated (unwrap! (as-max-len? (append current request-id) u192) ERR_TOO_MANY_PENDING))
         )
         (map-set pending-withdrawals key updated)
         (if was-empty
@@ -1171,39 +1172,12 @@
     )
 )
 
-;; Fold step for filter-settleable-request-ids. Keeps `request-id` when
-;; sbtc-registry reports status `(some true)` or `(some false)` (signer
-;; accepted/rejected). Drops still-pending (`none`) and unknown ids.
-;;
-;; #[allow(unchecked_data)]
-(define-private (filter-settleable-step
-        (request-id uint)
-        (kept (list 64 uint))
-    )
-    (match (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-withdrawal-request
-        request-id
-    )
-        request (match (get status request)
-            status-bool (default-to kept (as-max-len? (append kept request-id) u64))
-            kept
-        )
-        kept
-    )
-)
-
-;; Filter a tracked request-id list down to settleable ids only.
-;;
-;; #[allow(unchecked_data)]
-(define-private (filter-settleable-request-ids (request-ids (list 64 uint)))
-    (fold filter-settleable-step request-ids (list))
-)
-
-;; Fold step for get-pending-settlements. From the current `node` it reads that
-;; pending-withdrawals entry, filters to settleable request-ids, appends a row
-;; when the filtered list is nonempty, records `last-visited`, and advances
-;; `node` to the next linked-list entry. Nodes with only still-pending
-;; (status none) ids still consume a tick without appending. Once `node` is
-;; none it is a no-op. `tick` is unused; it only bounds the iteration count.
+;; Fold step for get-pending-settlements. Reads the current node's pending
+;; request-ids, appends one row carrying the whole list, and advances `node`
+;; to the next entry. Every node in pending-withdrawal-ll has a nonempty
+;; pending-withdrawals entry (a node is spliced out when its list empties), so
+;; no filtering is needed and one row is emitted per node. Once `node` is none
+;; it is a no-op. `tick` is unused; it only bounds the iteration count.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (pending-settlements-step
@@ -1213,15 +1187,11 @@
                 staker: principal,
                 signer-manager: principal,
             }),
-            last-visited: (optional {
-                staker: principal,
-                signer-manager: principal,
-            }),
             rows: (list 100
                 {
                     staker: principal,
                     signer-manager: principal,
-                    request-ids: (list 64 uint),
+                    request-ids: (list 192 uint),
                 }
             ),
         })
@@ -1234,33 +1204,21 @@
             )))
             (match (map-get? pending-withdrawals key)
                 request-ids
-                (let ((settleable (filter-settleable-request-ids request-ids)))
-                    (if (is-eq settleable (list))
-                        (merge acc {
-                            node: next-node,
-                            last-visited: (some key),
-                        })
-                        (merge acc {
-                            node: next-node,
-                            last-visited: (some key),
-                            rows: (default-to (get rows acc)
-                                (as-max-len?
-                                    (append (get rows acc) {
-                                        staker: (get staker key),
-                                        signer-manager: (get signer-manager key),
-                                        request-ids: settleable,
-                                    })
-                                    u100
-                                )),
-                        })
-                    )
-                )
-                ;; A linked-list node with no pending entry should never happen;
-                ;; skip it defensively rather than aborting the read.
                 (merge acc {
                     node: next-node,
-                    last-visited: (some key),
+                    rows: (default-to (get rows acc)
+                        (as-max-len?
+                            (append (get rows acc) {
+                                staker: (get staker key),
+                                signer-manager: (get signer-manager key),
+                                request-ids: request-ids,
+                            })
+                            u100
+                        )),
                 })
+                ;; A linked-list node with no pending entry should never happen;
+                ;; skip it defensively rather than aborting the read.
+                (merge acc { node: next-node })
             )
         )
         ;; Past the tail: nothing left to visit.
@@ -1268,19 +1226,22 @@
     )
 )
 
-;; List keys with settleable L1 withdrawal request-ids. Walks
-;; pending-withdrawal-ll from cursor, or from the head when cursor is none,
-;; and returns up to 100 rows whose request-ids have sbtc-registry status
-;; indicates the withdrawal has been accepted or rejected, omitting
-;; still-pending ids. A short or empty `rows` list does not mean the tail
-;; was reached, which happens only when the returned `next` cursor is none.
+;; List keys with outstanding L1 withdrawal request-ids. Walks
+;; pending-withdrawal-ll from cursor, or from the head when cursor is none, and
+;; returns up to 100 rows. Every node has a nonempty pending-withdrawals entry,
+;; so each visited node yields exactly one row and a short page means the tail
+;; was reached. Rows are included whether or not their parent registration still
+;; exists. Does not check sbtc-registry status; the caller should check each
+;; request-id before paying gas to settle.
 ;;
-;; Parameters: cursor  none to start at the head, or the `next` key from
-;;   the previous page so the walk resumes at that key's successor.
+;; Parameters:
+;;   cursor  none to start at the head, or the last key from the previous page
+;;           so the walk resumes at that key's successor.
 ;;
-;; Returns: ok wrapping { rows, next }. Each row has staker,
-;;   signer-manager, and settleable request-ids (up to 64). `next` is none
-;;   at the tail, or the last visited key when more nodes may remain.
+;; Returns:
+;;   ok wrapping a list of rows. Each row has staker, signer-manager, and
+;;   request-ids, every sbtc-registry request-id awaiting settlement for that
+;;   key, up to 192.
 (define-read-only (get-pending-settlements (cursor (optional {
     staker: principal,
     signer-manager: principal,
@@ -1295,25 +1256,15 @@
                 )
                 (var-get pending-withdrawal-ll-head)
             ))
-            ;; PENDING_TICKS is the elided (list 100 uint) bounding the walk to
-            ;; at most 100 node visits per call.
-            (walk (fold pending-settlements-step PENDING_TICKS {
-                node: start,
-                last-visited: none,
-                rows: (list),
-            }))
-            ;; If `node` is still `some` after the fold, ticks ran out with more
-            ;; list ahead: resume after `last-visited`. If `node` is none, the
-            ;; walk reached the tail or the list was empty.
-            (next (match (get node walk)
-                more-to-do (get last-visited walk)
-                none
-            ))
         )
-        (ok {
-            rows: (get rows walk),
-            next: next,
-        })
+        ;; PENDING_TICKS is the elided (list 100 uint) bounding the walk to at most
+        ;; 100 node visits per call.
+        (ok (get rows
+            (fold pending-settlements-step PENDING_TICKS {
+                node: start,
+                rows: (list),
+            })
+        ))
     )
 )
 
@@ -1324,12 +1275,12 @@
         (acc {
             target: uint,
             found: bool,
-            kept: (list 64 uint),
+            kept: (list 192 uint),
         })
     )
     (if (is-eq request-id (get target acc))
         (merge acc { found: true })
-        (merge acc { kept: (default-to (get kept acc) (as-max-len? (append (get kept acc) request-id) u64)) })
+        (merge acc { kept: (default-to (get kept acc) (as-max-len? (append (get kept acc) request-id) u192)) })
     )
 )
 

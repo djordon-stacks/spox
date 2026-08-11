@@ -640,7 +640,7 @@ export function getPendingClaims(cursor: OptionalCV = Cl.none()) {
   ).result;
 }
 
-export function getPendingSettlements(cursor: OptionalCV = Cl.none()) {
+export function getPendingSettlements(cursor = Cl.none()) {
   return simnet.callReadOnlyFn(
     "reward-claim-registry",
     "get-pending-settlements",
