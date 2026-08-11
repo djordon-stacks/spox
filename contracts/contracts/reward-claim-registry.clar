@@ -1107,9 +1107,8 @@
 (define-private (withdrawal-ready-to-list
         (request-id uint)
         (stored-height uint)
-        (bitcoin-block-height uint)
     )
-    (if (< bitcoin-block-height (+ stored-height SETTLEMENT_MIN_BURN_AGE))
+    (if (< burn-block-height (+ stored-height SETTLEMENT_MIN_BURN_AGE))
         false
         (match (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
             get-withdrawal-request request-id
@@ -1257,7 +1256,6 @@
                 signer-manager: principal,
                 request-id: uint,
             }),
-            bitcoin-block-height: uint,
             rows: (list 100
                 {
                     staker: principal,
@@ -1275,9 +1273,7 @@
             )))
             (match (map-get? pending-withdrawals key)
                 stored-height
-                (if (withdrawal-ready-to-list (get request-id key) stored-height
-                        (get bitcoin-block-height acc)
-                    )
+                (if (withdrawal-ready-to-list (get request-id key) stored-height)
                     (merge acc {
                         node: next-node,
                         last-visited: (some key),
@@ -1345,7 +1341,6 @@
             (walk (fold pending-settlements-step PENDING_TICKS {
                 node: start,
                 last-visited: none,
-                bitcoin-block-height: burn-block-height,
                 rows: (list),
             }))
             (next (match (get node walk)

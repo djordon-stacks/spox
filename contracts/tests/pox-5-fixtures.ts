@@ -370,6 +370,15 @@ export function setMaliciousReenterMode(mode: bigint, staker: string) {
   );
 }
 
+export function setMaliciousWithdrawalRequest(wid: OptionalCV<UIntCV>) {
+  return simnet.callPublicFn(
+    "malicious-signer-manager",
+    "set-withdrawal-request",
+    [wid],
+    deployer,
+  );
+}
+
 export function getMaliciousLastReenterError() {
   return simnet.callReadOnlyFn(
     "malicious-signer-manager",

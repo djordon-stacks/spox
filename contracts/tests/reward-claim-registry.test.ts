@@ -50,6 +50,7 @@ import {
   rejectWithdrawal,
   sbtcBalance,
   setMaliciousReenterMode,
+  setMaliciousWithdrawalRequest,
   setMockClaimRewardsResult,
   setMockClaimStakerResult,
   settleAcceptedWithdrawalOnSignerManager,
@@ -1013,8 +1014,10 @@ describe("L1 withdrawal path + settlements", () => {
     initPox5();
     registerSignerManager(SIGNER_PRIVATE_KEY);
     stakeWithPoxAddr(wallet1, SIGNER_SET_MIN_USTX, 2n, 100n);
+    stakeWithPoxAddr(wallet2, SIGNER_SET_MIN_USTX, 2n, 100n);
     fundAndClaimSignerRewards(2000n, 1n);
     registerForClaims(wallet1, 3n * FEE_PER_CLAIM, wallet1, SIGNER_MANAGER, STX_START, true);
+    registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
     mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
   });
 
@@ -1101,6 +1104,23 @@ describe("L1 withdrawal path + settlements", () => {
     expect(result).toBeOk(Cl.uint(1));
     mineUntilSettlementListable();
     expect(getPendingSettlements()).toBeOk(pendingSettlementsPage([]));
+  });
+
+  it("process-reward-claims records withdrawal request-ids", () => {
+    const { result } = simnet.callPublicFn(
+      "reward-claim-registry",
+      "process-reward-claims",
+      [Cl.principal(SIGNER_MANAGER), Cl.list([Cl.principal(wallet1), Cl.principal(wallet2)])],
+      wallet3,
+    );
+    expect(result).toBeOk(Cl.uint(2));
+
+    acceptWithdrawal(1n, 30n);
+    acceptWithdrawal(2n, 30n);
+    mineUntilSettlementListable();
+    expect(getPendingSettlements()).toBeOk(
+      pendingSettlementsPage([settlementRow(wallet1, 1n), settlementRow(wallet2, 2n)]),
+    );
   });
 });
 
@@ -1243,6 +1263,79 @@ describe("get-pending-settlements pagination", () => {
 
       expect(pageSizes).toEqual([95, 93, 19]);
       expect(listedIds).toEqual(expectedIds);
+    },
+    300_000,
+  );
+
+  it(
+    "returns empty rows with next set when the first 100 nodes are not settleable",
+    () => {
+      const TOTAL = 101;
+      initPox5();
+      registerSignerManager(SIGNER_PRIVATE_KEY);
+
+      const stakers = Array.from({ length: TOTAL }, (_, i) => {
+        const hex = (BigInt(i) + 1n).toString(16).padStart(64, "0") + "01";
+        return privateKeyToAddress(hex, "testnet");
+      });
+
+      for (const staker of stakers) {
+        expect(
+          simnet.transferSTX(SIGNER_SET_MIN_USTX + 1_000_000n, staker, deployer).result,
+        ).toBeOk(Cl.bool(true));
+        stakeWithPoxAddr(staker, SIGNER_SET_MIN_USTX, 2n, 100n);
+        expect(
+          registerForClaims(staker, FEE_PER_CLAIM, deployer, SIGNER_MANAGER, STX_START, true)
+            .result,
+        ).toBeOk(Cl.uint(1));
+      }
+
+      fundAndClaimSignerRewards(500_000n, 1n);
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      for (let i = 0; i < TOTAL; i++) {
+        expect(processRewardClaim(stakers[i]!, deployer, SIGNER_MANAGER).result).toBeOk(
+          Cl.some(Cl.uint(BigInt(i + 1))),
+        );
+      }
+
+      const lastId = BigInt(TOTAL);
+      const lastStaker = stakers[TOTAL - 1]!;
+      expect(acceptWithdrawal(lastId, 30n).result).toBeOk(Cl.bool(true));
+      mineUntilSettlementListable();
+
+      const first = cvToJSON(getPendingSettlements()) as {
+        success: boolean;
+        value: {
+          value: {
+            rows: { value: unknown[] };
+            next: {
+              value: null | {
+                value: {
+                  staker: { value: string };
+                  "signer-manager": { value: string };
+                  "request-id": { value: string };
+                };
+              };
+            };
+          };
+        };
+      };
+      expect(first.success).toBe(true);
+      expect(first.value.value.rows.value).toHaveLength(0);
+      expect(first.value.value.next.value).not.toBeNull();
+
+      const nextKey = first.value.value.next.value!.value;
+      const second = getPendingSettlements(
+        Cl.some(
+          Cl.tuple({
+            staker: Cl.principal(nextKey.staker.value),
+            "signer-manager": Cl.principal(nextKey["signer-manager"].value),
+            "request-id": Cl.uint(BigInt(nextKey["request-id"].value)),
+          }),
+        ),
+      );
+      expect(second).toBeOk(pendingSettlementsPage([settlementRow(lastStaker, lastId)]));
     },
     300_000,
   );
@@ -1477,7 +1570,7 @@ describe("reentrancy", () => {
     expect(stxBalance(wallet1)).toBe(before);
   });
 
-  it("blocks settle-pending-withdrawal reentry from claim-staker-rewards", () => {
+  it("blocks settle-pending-withdrawals reentry from claim-staker-rewards", () => {
     setMaliciousReenterMode(REENTER_SETTLE, wallet1);
     expect(processRewardClaim(wallet1, wallet1, MALICIOUS_SIGNER_MANAGER).result).toBeOk(
       Cl.none(),
@@ -1514,6 +1607,51 @@ describe("reentrancy", () => {
     );
     expect(getMaliciousLastReenterError()).toBeSome(Cl.uint(ERR_UNAUTHORIZED));
     expectSingleAdvance();
+  });
+});
+
+describe("reentrancy from settle-accepted-withdrawal", () => {
+  beforeEach(() => {
+    initPox5();
+    registerSignerManager(SIGNER_PRIVATE_KEY);
+    registerMaliciousSignerManager();
+    stakeWithPoxAddr(wallet2, SIGNER_SET_MIN_USTX, 2n, 100n);
+    stakeForMalicious(wallet1, SIGNER_SET_MIN_USTX, 4n);
+    fundAndClaimSignerRewards(2000n, 1n);
+    registerForClaims(wallet2, 3n * FEE_PER_CLAIM, wallet2, SIGNER_MANAGER, STX_START, true);
+    registerForClaims(
+      wallet1,
+      3n * FEE_PER_CLAIM,
+      wallet1,
+      MALICIOUS_SIGNER_MANAGER,
+      STX_START,
+      true,
+    );
+    mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+    expect(processRewardClaim(wallet2, wallet2, SIGNER_MANAGER).result).toBeOk(Cl.some(Cl.uint(1)));
+    setMaliciousWithdrawalRequest(Cl.some(Cl.uint(1)));
+    expect(processRewardClaim(wallet1, wallet1, MALICIOUS_SIGNER_MANAGER).result).toBeOk(
+      Cl.some(Cl.uint(1)),
+    );
+    acceptWithdrawal(1n, 30n);
+  });
+
+  it("blocks settle-pending-withdrawals reentry from settle-accepted-withdrawal", () => {
+    setMaliciousReenterMode(REENTER_SETTLE, wallet1);
+    expect(
+      simnet.callPublicFn(
+        "reward-claim-registry",
+        "settle-pending-withdrawal",
+        [Cl.principal(wallet1), Cl.principal(MALICIOUS_SIGNER_MANAGER), Cl.uint(1)],
+        wallet3,
+      ).result,
+    ).toBeOk(Cl.bool(true));
+    expect(getMaliciousLastReenterError()).toBeSome(Cl.uint(ERR_REENTRANT_CALL));
+    mineUntilSettlementListable();
+    expect(getPendingSettlements()).toBeOk(
+      pendingSettlementsPage([settlementRow(wallet2, 1n)]),
+    );
   });
 });
 
