@@ -986,9 +986,7 @@
     (let (
             (current (default-to (list) (map-get? pending-withdrawals key)))
             (was-empty (is-eq current (list)))
-            (updated (unwrap! (as-max-len? (append current request-id) u64)
-                ERR_TOO_MANY_PENDING
-            ))
+            (updated (unwrap! (as-max-len? (append current request-id) u64) ERR_TOO_MANY_PENDING))
         )
         (map-set pending-withdrawals key updated)
         (if was-empty
@@ -1085,13 +1083,11 @@
         (request-id uint)
         (kept (list 64 uint))
     )
-    (match (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
-            get-withdrawal-request request-id
-        )
+    (match (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-withdrawal-request
+        request-id
+    )
         request (match (get status request)
-            status-bool (default-to kept
-                (as-max-len? (append kept request-id) u64)
-            )
+            status-bool (default-to kept (as-max-len? (append kept request-id) u64))
             kept
         )
         kept
@@ -1101,9 +1097,7 @@
 ;; Filter a tracked request-id list down to settleable ids only.
 ;;
 ;; #[allow(unchecked_data)]
-(define-private (filter-settleable-request-ids
-        (request-ids (list 64 uint))
-    )
+(define-private (filter-settleable-request-ids (request-ids (list 64 uint)))
     (fold filter-settleable-step request-ids (list))
 )
 
@@ -1238,11 +1232,7 @@
     )
     (if (is-eq request-id (get target acc))
         (merge acc { found: true })
-        (merge acc {
-            kept: (default-to (get kept acc)
-                (as-max-len? (append (get kept acc) request-id) u64)
-            ),
-        })
+        (merge acc { kept: (default-to (get kept acc) (as-max-len? (append (get kept acc) request-id) u64)) })
     )
 )
 
