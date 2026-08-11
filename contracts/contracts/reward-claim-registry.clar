@@ -23,8 +23,8 @@
 (define-constant ERR_UNKNOWN_PENDING_WITHDRAWAL (err u607))
 ;; start-reward-cycle is before the position's first-reward-cycle
 (define-constant ERR_INVALID_START_REWARD_CYCLE (err u608))
-;; This is returned when the tx-sender is not allowed to register, add claims,
-;; or cancel for this staker.
+;; This is returned when the contract-caller is not allowed to register,
+;; add claims, or cancel for this staker.
 (define-constant ERR_UNAUTHORIZED (err u609))
 ;; A registration already exists for this staker and signer-manager
 (define-constant ERR_ALREADY_REGISTERED (err u610))
@@ -886,9 +886,10 @@
     (begin
         (asserts! (not (var-get signer-manager-call-active)) ERR_REENTRANT_CALL)
         (var-set signer-manager-call-active true)
-        (try! (contract-call? signer-manager settle-accepted-withdrawal request-id))
-        (var-set signer-manager-call-active false)
-        (ok true)
+        (let ((result (contract-call? signer-manager settle-accepted-withdrawal request-id)))
+            (var-set signer-manager-call-active false)
+            result
+        )
     )
 )
 
@@ -903,9 +904,10 @@
     (begin
         (asserts! (not (var-get signer-manager-call-active)) ERR_REENTRANT_CALL)
         (var-set signer-manager-call-active true)
-        (try! (contract-call? signer-manager reclaim-failed-withdrawal request-id))
-        (var-set signer-manager-call-active false)
-        (ok true)
+        (let ((result (contract-call? signer-manager reclaim-failed-withdrawal request-id)))
+            (var-set signer-manager-call-active false)
+            result
+        )
     )
 )
 
