@@ -1104,6 +1104,150 @@ describe("L1 withdrawal path + settlements", () => {
   });
 });
 
+describe("get-pending-settlements pagination", () => {
+  it(
+    "paginates past not-yet-settleable withdrawals across >100 ids (Rust get_all style)",
+    () => {
+      // 150 stakers on pending-withdrawal-ll; 70 of them get a second claim so
+      // there are 220 withdrawal IDs (one LL node each). 10 stakers stay
+      // status-none: 5 of those first-claim nodes sit in the first 100 visits
+      // and 5 in the next 50. Dual-claim ids append after the 150 first-claims.
+      // PENDING_TICKS=100, so three pages of settleable rows: 95 + 93 + 19.
+      const TOTAL_STAKERS = 150;
+      const DUAL_CLAIM_COUNT = 70; // 150 + 70 = 220 withdrawal IDs
+      const notSettleable = new Set([10, 30, 50, 70, 90, 110, 130, 140, 145, 149]);
+
+      initPox5();
+      registerSignerManager(SIGNER_PRIVATE_KEY);
+
+      const stakers = Array.from({ length: TOTAL_STAKERS }, (_, i) => {
+        const hex = (BigInt(i) + 1n).toString(16).padStart(64, "0") + "01";
+        return privateKeyToAddress(hex, "testnet");
+      });
+
+      for (let i = 0; i < TOTAL_STAKERS; i++) {
+        const staker = stakers[i]!;
+        expect(
+          simnet.transferSTX(SIGNER_SET_MIN_USTX + 1_000_000n, staker, deployer).result,
+        ).toBeOk(Cl.bool(true));
+        stakeWithPoxAddr(staker, SIGNER_SET_MIN_USTX, 6n, 100n);
+        expect(
+          registerForClaims(
+            staker,
+            3n * FEE_PER_CLAIM,
+            deployer,
+            SIGNER_MANAGER,
+            STX_START,
+            true,
+          ).result,
+        ).toBeOk(Cl.uint(3));
+      }
+
+      fundAndClaimSignerRewards(500_000n, 1n);
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST);
+
+      const idsByStaker = new Map<string, bigint[]>();
+      const readWithdrawalId = (result: ClarityValue): bigint => {
+        const json = cvToJSON(result) as {
+          success: boolean;
+          value: { value: { value: string } };
+        };
+        expect(json.success).toBe(true);
+        return BigInt(json.value.value.value);
+      };
+
+      for (const staker of stakers) {
+        const { result } = processRewardClaim(staker, deployer, SIGNER_MANAGER);
+        idsByStaker.set(staker, [readWithdrawalId(result)]);
+      }
+
+      fundAndClaimSignerRewards(500_000n, 2n);
+      mineUntilPastDistribution(STX_FIRST_CLAIM_DIST + 2n);
+
+      for (let i = 0; i < DUAL_CLAIM_COUNT; i++) {
+        const staker = stakers[i]!;
+        const { result } = processRewardClaim(staker, deployer, SIGNER_MANAGER);
+        idsByStaker.get(staker)!.push(readWithdrawalId(result));
+      }
+
+      const allIds = [...idsByStaker.values()].flat();
+      expect(allIds).toHaveLength(220);
+      expect(new Set(allIds).size).toBe(220);
+
+      for (let i = 0; i < TOTAL_STAKERS; i++) {
+        if (notSettleable.has(i)) continue;
+        for (const id of idsByStaker.get(stakers[i]!)!) {
+          expect(rejectWithdrawal(id).result).toBeOk(Cl.bool(true));
+        }
+      }
+
+      mineUntilSettlementListable();
+
+      const expectedIds: bigint[] = [];
+      for (let i = 0; i < TOTAL_STAKERS; i++) {
+        if (!notSettleable.has(i)) expectedIds.push(idsByStaker.get(stakers[i]!)![0]!);
+      }
+      for (let i = 0; i < DUAL_CLAIM_COUNT; i++) {
+        if (!notSettleable.has(i)) expectedIds.push(idsByStaker.get(stakers[i]!)![1]!);
+      }
+      expect(expectedIds).toHaveLength(207);
+
+      const notSettleableStakers = new Set(
+        [...notSettleable].map((i) => stakers[i]!),
+      );
+
+      const listedIds: bigint[] = [];
+      let cursor: OptionalCV = Cl.none();
+      const pageSizes: number[] = [];
+      for (let guard = 0; guard < 10; guard++) {
+        const json = cvToJSON(getPendingSettlements(cursor));
+        expect(json.success).toBe(true);
+        const page = json.value.value as {
+          rows: {
+            value: Array<{
+              value: {
+                staker: { value: string };
+                "request-id": { value: string };
+              };
+            }>;
+          };
+          next: {
+            value: null | {
+              value: {
+                staker: { value: string };
+                "signer-manager": { value: string };
+                "request-id": { value: string };
+              };
+            };
+          };
+        };
+
+        pageSizes.push(page.rows.value.length);
+        for (const row of page.rows.value) {
+          expect(notSettleableStakers.has(row.value.staker.value)).toBe(false);
+          listedIds.push(BigInt(row.value["request-id"].value));
+        }
+
+        if (page.next.value === null) {
+          break;
+        }
+        const nextKey = page.next.value.value;
+        cursor = Cl.some(
+          Cl.tuple({
+            staker: Cl.principal(nextKey.staker.value),
+            "signer-manager": Cl.principal(nextKey["signer-manager"].value),
+            "request-id": Cl.uint(BigInt(nextKey["request-id"].value)),
+          }),
+        );
+      }
+
+      expect(pageSizes).toEqual([95, 93, 19]);
+      expect(listedIds).toEqual(expectedIds);
+    },
+    300_000,
+  );
+});
+
 // Schedule / advance invariants. Several STX boundary cases are already
 // covered above; this suite tests catch-up, bond cadence, the desired
 // past-cycle bond skip, and mock SM error advance.
