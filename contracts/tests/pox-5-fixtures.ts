@@ -74,6 +74,7 @@ export const ERR_INVALID_START_REWARD_CYCLE = 608n;
 export const ERR_UNAUTHORIZED = 609n;
 export const ERR_ALREADY_REGISTERED = 610n;
 export const ERR_SIGNER_MANAGER_MISMATCH = 611n;
+export const ERR_REENTRANT_CALL = 612n;
 
 /** reward-claim-registry's default fee-per-sweep. */
 export const FEE_PER_CLAIM = 100_000n;
