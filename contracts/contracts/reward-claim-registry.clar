@@ -1074,10 +1074,8 @@
     )
 )
 
-;; Store only request-ids that are a live sBTC withdrawal (status none). Junk
-;; and already-settled ids are ignored so a hostile SM cannot stall the claim.
-;; Who initiated the request is not checked; the SM may route through another
-;; contract.
+;; We only want to store request-ids that are for a live sBTC withdrawal,
+;; this function does that check.
 ;; #[allow(unchecked_data)]
 (define-private (is-trackable-withdrawal (request-id uint))
     (match (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-withdrawal-request
@@ -1101,8 +1099,8 @@
     )
 )
 
-;; True when this indexed withdrawal is old enough and sBTC has resolved it
-;; (status some). Used only by get-pending-settlements; settle is ungated.
+;; Returns true when this indexed withdrawal is old enough and sBTC has
+;; resolved it. Used only by get-pending-settlements.
 ;; #[allow(unchecked_data)]
 (define-private (withdrawal-ready-to-list
         (request-id uint)
@@ -1119,9 +1117,10 @@
     )
 )
 
-;; Append `request-id` when it is a live sBTC pending withdrawal. Returns some
-;; id if tracked (stored or already present), none if skipped. Records
-;; burn-block-height and splices the 3-tuple into pending-withdrawal-ll.
+;; Append `request-id` when it is a valid sBTC pending withdrawal. Returns
+;; some id if tracked (stored or already present), none if skipped. Records
+;; burn-block-height and adds an entry into the pending-withdrawal-ll
+;; linked list.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (append-pending-withdrawal
@@ -1237,10 +1236,12 @@
     )
 )
 
-;; Fold step for get-pending-settlements. Visits one linked-list node, appends
-;; a row when the withdrawal is old enough and sBTC has resolved it, records
-;; `last-visited`, and advances `node`. Young or still-pending entries consume
-;; a tick without emitting a row. `tick` is unused; it only bounds the walk.
+;; Fold step for get-pending-settlements.
+;;
+;; Visits one linked-list node, appends a row when the withdrawal is old
+;; enough and sBTC has resolved it, records `last-visited`, and advances
+;; `node`. Young or still-pending entries do not emit a row in the
+;; accumulators rows field.
 ;;
 ;; #[allow(unchecked_data)]
 (define-private (pending-settlements-step
@@ -1307,22 +1308,24 @@
 
 ;; List indexed L1 withdrawals that are ready to settle. Walks
 ;; pending-withdrawal-ll from cursor, or from the head when cursor is none.
-;; A row is emitted only when at least SETTLEMENT_MIN_BURN_AGE Bitcoin blocks
-;; have passed since insert and sbtc-registry status is some (accepted or
-;; rejected). Younger or still-pending nodes consume walk ticks without
-;; appending a row, so a short or empty `rows` list does not mean the tail
-;; was reached. Use the returned `next` cursor: none means the walk hit the
-;; tail; some key means pass that key as the next `cursor` to resume after it.
-;; Rows are included whether or not their parent registration still exists.
+;; A row is emitted only when at least SETTLEMENT_MIN_BURN_AGE Bitcoin
+;; blocks have passed since insert and sbtc-registry status indicated that
+;; it has been accepted or rejected. Use the returned `next` cursor: none
+;; means the walk hit the tail; some key means pass that key as the next
+;; `cursor` to resume after it. Rows are included whether or not their
+;; parent registration still exists.
 ;;
 ;; Parameters:
-;;   cursor  none to start at the head, or the `next` key from the previous
-;;           page so the walk resumes at that key's successor.
+;;
+;;   cursor  use none to start at the head. When some, it indicates where
+;;           to resume looking for pending settlements. The settlement for
+;;           this key is not included in the response.
 ;;
 ;; Returns:
+;;
 ;;   ok wrapping { rows, next }. Each row has staker, signer-manager, and
-;;   request-id. `next` is none at the tail, or the last visited key when more
-;;   nodes may remain.
+;;   request-id. `next` is none at the tail, or the last visited key when
+;;   more nodes may remain.
 (define-read-only (get-pending-settlements (cursor (optional {
     staker: principal,
     signer-manager: principal,
