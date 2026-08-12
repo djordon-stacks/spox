@@ -119,8 +119,8 @@ async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Resul
 /// This function works as follows:
 /// 1. Gets all pending withdrawals from the registry.
 /// 2. Submits a settle-pending-withdrawals contract call for each batch of
-///    withdrawals, where a batch is a group of at most 100 stakers who are
-///    associated with the same signer-manager.
+///    withdrawals, where a batch is a group of at most 100 withdrawals who
+///    are associated with the same signer-manager.
 #[instrument(skip(state))]
 async fn process_withdrawals(state: &RewardClaimState, chain_tip: &BlockRef) -> Result<(), Error> {
     let batches = state.registry.get_pending_withdrawal_batches().await?;
