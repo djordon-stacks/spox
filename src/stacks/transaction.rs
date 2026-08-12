@@ -22,8 +22,8 @@ use clarity::vm::types::TypeSignature;
 
 use crate::stacks::reward_claim_registry::MAX_STAKERS_LENGTH;
 use crate::stacks::reward_claim_registry::RewardClaimsBatch;
-use crate::stacks::reward_claim_registry::SettlementsBatch;
-use crate::stacks::reward_claim_registry::TUPLE_SETTLEMENT_ITEM_SIGNATURE;
+use crate::stacks::reward_claim_registry::TUPLE_WITHDRAWAL_ITEM_SIGNATURE;
+use crate::stacks::reward_claim_registry::WithdrawalsBatch;
 
 /// The type signature for the list of 100 stakers.
 ///
@@ -40,9 +40,9 @@ static LIST_PRINCIPALS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
 ///
 /// Same size bounds as [`LIST_PRINCIPALS_SIGNATURE`]: depth is small and the
 /// max serialized size is well under 1 MiB. Exercised by the dummy
-/// `SettlementsBatch` contract-call test.
-static LIST_SETTLEMENT_ITEMS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
-    let entry_type = TUPLE_SETTLEMENT_ITEM_SIGNATURE.clone().into();
+/// `WithdrawalsBatch` contract-call test.
+static LIST_WITHDRAWAL_ITEMS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
+    let entry_type = TUPLE_WITHDRAWAL_ITEM_SIGNATURE.clone().into();
     ListTypeData::new_list(entry_type, MAX_STAKERS_LENGTH as u32).unwrap()
 });
 
@@ -150,7 +150,7 @@ impl IntoContractCall for RewardClaimsBatch {
     }
 }
 
-impl IntoContractCall for SettlementsBatch {
+impl IntoContractCall for WithdrawalsBatch {
     /// The name of the clarity smart contract that relates to this struct.
     const CONTRACT_NAME: &'static str = "reward-claim-registry";
     /// The specific function name that relates to this struct.
@@ -169,7 +169,7 @@ impl IntoContractCall for SettlementsBatch {
             .into_items()
             .map(|item| ClarityValue::Tuple(item.into_tuple()))
             .collect::<Vec<_>>();
-        let type_signature = LIST_SETTLEMENT_ITEMS_SIGNATURE.clone();
+        let type_signature = LIST_WITHDRAWAL_ITEMS_SIGNATURE.clone();
 
         vec![
             ClarityValue::CallableContract(callable),
@@ -195,7 +195,7 @@ mod tests {
     fn settle_pending_withdrawals_contract_call_creation() {
         // This is to check that this function doesn't implicitly panic. If
         // it doesn't panic now, it can never panic at runtime.
-        let call = SettlementsBatch::dummy();
+        let call = WithdrawalsBatch::dummy();
 
         let _ = call.into_tx_payload();
     }
