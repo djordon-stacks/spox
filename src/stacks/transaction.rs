@@ -86,7 +86,7 @@ pub struct StacksTxPostConditions {
 }
 
 /// A trait to ease construction of a contract call StacksTransaction.
-pub trait AsContractCall: Sized {
+pub trait IntoContractCall: Sized {
     /// The name of the clarity smart contract that relates to this struct.
     const CONTRACT_NAME: &'static str;
     /// The specific function name that relates to this struct.
@@ -94,10 +94,10 @@ pub trait AsContractCall: Sized {
     /// The stacks address that deployed the contract.
     fn deployer_address(&self) -> &StacksAddress;
     /// The arguments to the clarity function.
-    fn as_contract_args(self) -> Vec<ClarityValue>;
-    /// Convert this struct to a Stacks contract call.
-    fn as_contract_call(self) -> TransactionContractCall {
-        TransactionContractCall {
+    fn into_contract_args(self) -> Vec<ClarityValue>;
+    /// The payload of the transaction
+    fn into_tx_payload(self) -> TransactionPayload {
+        let contract_call = TransactionContractCall {
             address: self.deployer_address().clone(),
             // The following From::from calls are more dangerous than they
             // appear. Under the hood they call their TryFrom::try_from
@@ -105,12 +105,9 @@ pub trait AsContractCall: Sized {
             // is fine in our test.
             function_name: ClarityName::from(Self::FUNCTION_NAME),
             contract_name: ContractName::from(Self::CONTRACT_NAME),
-            function_args: self.as_contract_args(),
-        }
-    }
-    /// The payload of the transaction
-    fn tx_payload(self) -> TransactionPayload {
-        TransactionPayload::ContractCall(self.as_contract_call())
+            function_args: self.into_contract_args(),
+        };
+        TransactionPayload::ContractCall(contract_call)
     }
     /// Any post-execution conditions that we'd like to enforce. The
     /// deployer corresponds to the principal in the Transaction
@@ -125,7 +122,7 @@ pub trait AsContractCall: Sized {
     }
 }
 
-impl AsContractCall for RewardClaimsBatch {
+impl IntoContractCall for RewardClaimsBatch {
     /// The name of the clarity smart contract that relates to this struct.
     const CONTRACT_NAME: &'static str = "reward-claim-registry";
     /// The specific function name that relates to this struct.
@@ -135,7 +132,7 @@ impl AsContractCall for RewardClaimsBatch {
         self.deployer()
     }
     /// The arguments to the clarity function.
-    fn as_contract_args(self) -> Vec<ClarityValue> {
+    fn into_contract_args(self) -> Vec<ClarityValue> {
         let callable = CallableData {
             contract_identifier: self.signer_manager().clone(),
             trait_identifier: Some(make_trait_identifier(self.deployer().clone())),
@@ -153,7 +150,7 @@ impl AsContractCall for RewardClaimsBatch {
     }
 }
 
-impl AsContractCall for SettlementsBatch {
+impl IntoContractCall for SettlementsBatch {
     /// The name of the clarity smart contract that relates to this struct.
     const CONTRACT_NAME: &'static str = "reward-claim-registry";
     /// The specific function name that relates to this struct.
@@ -163,7 +160,7 @@ impl AsContractCall for SettlementsBatch {
         self.deployer()
     }
     /// The arguments to the clarity function.
-    fn as_contract_args(self) -> Vec<ClarityValue> {
+    fn into_contract_args(self) -> Vec<ClarityValue> {
         let callable = CallableData {
             contract_identifier: self.signer_manager().clone(),
             trait_identifier: Some(make_trait_identifier(self.deployer().clone())),
@@ -191,7 +188,7 @@ mod tests {
         // it doesn't panic now, it can never panic at runtime.
         let call = RewardClaimsBatch::dummy();
 
-        let _ = call.as_contract_call();
+        let _ = call.into_tx_payload();
     }
 
     #[test]
@@ -200,6 +197,6 @@ mod tests {
         // it doesn't panic now, it can never panic at runtime.
         let call = SettlementsBatch::dummy();
 
-        let _ = call.as_contract_call();
+        let _ = call.into_tx_payload();
     }
 }
