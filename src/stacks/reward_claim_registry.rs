@@ -9,8 +9,12 @@ use clarity::types::chainstate::StacksBlockId;
 use clarity::vm::ClarityName;
 use clarity::vm::ContractName;
 use clarity::vm::Value as ClarityValue;
+use clarity::vm::types::CallableData;
+use clarity::vm::types::ListData;
+use clarity::vm::types::ListTypeData;
 use clarity::vm::types::PrincipalData;
 use clarity::vm::types::QualifiedContractIdentifier;
+use clarity::vm::types::SequenceData;
 use clarity::vm::types::TupleData;
 use clarity::vm::types::TupleTypeSignature;
 use clarity::vm::types::TypeSignature;
@@ -18,6 +22,8 @@ use clarity::vm::types::TypeSignature;
 use crate::error::Error;
 use crate::stacks::clarity::ClarityTuple;
 use crate::stacks::node::StacksClient;
+use crate::stacks::transaction::IntoContractCall;
+use crate::stacks::transaction::make_trait_identifier;
 
 /// Maximum list length for registry batch contract calls.
 ///
@@ -31,7 +37,7 @@ pub const MAX_STAKERS_LENGTH: usize = 100;
 /// depth exceeds 32, or the max would-be size exceeds 1 MiB. Ours are
 /// non-empty with a max depth less than 3, and a max would-be size less
 /// than 500 bytes. We also exercised this code in the contract-call tests.
-pub static TUPLE_WITHDRAWAL_ITEM_SIGNATURE: LazyLock<TupleTypeSignature> = LazyLock::new(|| {
+static TUPLE_WITHDRAWAL_ITEM_SIGNATURE: LazyLock<TupleTypeSignature> = LazyLock::new(|| {
     TupleTypeSignature::try_from(BTreeMap::from([
         (ClarityName::from("staker"), TypeSignature::PrincipalType),
         (ClarityName::from("request-id"), TypeSignature::UIntType),
@@ -53,6 +59,27 @@ static TUPLE_WITHDRAWAL_KEY_SIGNATURE: LazyLock<TupleTypeSignature> = LazyLock::
         (ClarityName::from("request-id"), TypeSignature::UIntType),
     ]))
     .unwrap()
+});
+
+/// The type signature for the list of 100 stakers.
+///
+/// ListTypeData::new_list only returns an Err when max size of the type
+/// could be greater than 1 MiB, or if the type depth is greater than 32.
+/// Our type depth is 1 and the max size is 148 * 100 + 6 bytes, well under
+/// 1 MiB. We also have a test that exercises this path so we know that
+/// this won't panic in production.
+static LIST_PRINCIPALS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
+    ListTypeData::new_list(TypeSignature::PrincipalType, MAX_STAKERS_LENGTH as u32).unwrap()
+});
+
+/// The type signature for the list of 100 `{staker, request-id}` items.
+///
+/// Same size bounds as [`LIST_PRINCIPALS_SIGNATURE`]: depth is small and the
+/// max serialized size is well under 1 MiB. Exercised by the dummy
+/// `WithdrawalsBatch` contract-call test.
+static LIST_WITHDRAWAL_ITEMS_SIGNATURE: LazyLock<ListTypeData> = LazyLock::new(|| {
+    let entry_type = TUPLE_WITHDRAWAL_ITEM_SIGNATURE.clone().into();
+    ListTypeData::new_list(entry_type, MAX_STAKERS_LENGTH as u32).unwrap()
 });
 
 /// Key identifying a registration in the reward claim registry.
@@ -234,15 +261,33 @@ impl RewardClaimsBatch {
     pub fn num_stakers(&self) -> usize {
         self.stakers.len()
     }
+}
 
-    /// The stakers to claim for in this call.
-    pub fn stakers(self) -> Vec<PrincipalData> {
-        self.stakers
-    }
-
-    /// The address that deployed the rewards claim registry.
-    pub fn deployer(&self) -> &StacksAddress {
+impl IntoContractCall for RewardClaimsBatch {
+    /// The name of the clarity smart contract that relates to this struct.
+    const CONTRACT_NAME: &'static str = "reward-claim-registry";
+    /// The specific function name that relates to this struct.
+    const FUNCTION_NAME: &'static str = "process-reward-claims";
+    /// The stacks address that deployed the contract.
+    fn deployer_address(&self) -> &StacksAddress {
         &self.deployer
+    }
+    /// The arguments to the clarity function.
+    fn into_contract_args(self) -> Vec<ClarityValue> {
+        let callable = CallableData {
+            contract_identifier: self.signer_manager,
+            trait_identifier: Some(make_trait_identifier(self.deployer)),
+        };
+        let stakers = self.stakers.into_iter().map(ClarityValue::Principal);
+        let stakers = ListData {
+            data: stakers.collect(),
+            type_signature: LIST_PRINCIPALS_SIGNATURE.clone(),
+        };
+
+        vec![
+            ClarityValue::CallableContract(callable),
+            ClarityValue::Sequence(SequenceData::List(stakers)),
+        ]
     }
 }
 
@@ -264,12 +309,10 @@ impl WithdrawalsBatch {
     /// Create a new dummy withdrawals batch.
     #[cfg(test)]
     pub fn dummy() -> Self {
+        let principal = PrincipalData::from(StacksAddress::burn_address(false));
         Self {
             signer_manager: QualifiedContractIdentifier::transient(),
-            items: vec![WithdrawalItem::new(
-                PrincipalData::from(StacksAddress::burn_address(false)),
-                1,
-            )],
+            items: vec![WithdrawalItem::new(principal, 1)],
             deployer: StacksAddress::burn_address(false),
         }
     }
@@ -278,15 +321,35 @@ impl WithdrawalsBatch {
     pub fn signer_manager(&self) -> &QualifiedContractIdentifier {
         &self.signer_manager
     }
+}
 
-    /// The withdrawal items to settle in this call.
-    pub fn into_items(self) -> std::vec::IntoIter<WithdrawalItem> {
-        self.items.into_iter()
-    }
-
-    /// The address that deployed the rewards claim registry.
-    pub fn deployer(&self) -> &StacksAddress {
+impl IntoContractCall for WithdrawalsBatch {
+    /// The name of the clarity smart contract that relates to this struct.
+    const CONTRACT_NAME: &'static str = "reward-claim-registry";
+    /// The specific function name that relates to this struct.
+    const FUNCTION_NAME: &'static str = "settle-pending-withdrawals";
+    /// The stacks address that deployed the contract.
+    fn deployer_address(&self) -> &StacksAddress {
         &self.deployer
+    }
+    /// The arguments to the clarity function.
+    fn into_contract_args(self) -> Vec<ClarityValue> {
+        let callable = CallableData {
+            contract_identifier: self.signer_manager,
+            trait_identifier: Some(make_trait_identifier(self.deployer)),
+        };
+        let data = self
+            .items
+            .into_iter()
+            .map(|item| ClarityValue::Tuple(item.into_tuple()))
+            .collect::<Vec<_>>();
+
+        let type_signature = LIST_WITHDRAWAL_ITEMS_SIGNATURE.clone();
+
+        vec![
+            ClarityValue::CallableContract(callable),
+            ClarityValue::Sequence(SequenceData::List(ListData { data, type_signature })),
+        ]
     }
 }
 
@@ -1082,10 +1145,8 @@ mod tests {
             .find(|batch| batch.signer_manager() == &sm_b)
             .expect("batch for signer-manager B");
 
-        assert_eq!(batch_a.deployer(), &StacksAddress::burn_address(false));
-        assert_eq!(batch_b.deployer(), &StacksAddress::burn_address(false));
-        assert_eq!(batch_a.clone().stakers(), vec![staker1, staker3]);
-        assert_eq!(batch_b.clone().stakers(), vec![staker2]);
+        assert_eq!(batch_a.stakers, vec![staker1, staker3]);
+        assert_eq!(batch_b.stakers, vec![staker2]);
     }
 
     #[test]
@@ -1112,16 +1173,13 @@ mod tests {
         assert!(batches.iter().all(|batch| batch.signer_manager() == &sm));
         assert_eq!(batches[0].num_stakers(), MAX_STAKERS_LENGTH);
         assert_eq!(batches[1].num_stakers(), 1);
-        let batch0_stakers = batches[0].clone().stakers();
+        let batch0_stakers = batches[0].stakers.clone();
         assert_eq!(batch0_stakers[0], claims[0].staker);
         assert_eq!(
             batch0_stakers[MAX_STAKERS_LENGTH - 1],
             claims[MAX_STAKERS_LENGTH - 1].staker
         );
-        assert_eq!(
-            batches[1].clone().stakers()[0],
-            claims[MAX_STAKERS_LENGTH].staker
-        );
+        assert_eq!(batches[1].stakers[0], claims[MAX_STAKERS_LENGTH].staker);
     }
 
     fn withdrawal(
@@ -1173,7 +1231,7 @@ mod tests {
             .find(|batch| batch.signer_manager() == &sm_b)
             .expect("batch for signer-manager B");
 
-        let batch_a_items: Vec<_> = batch_a.clone().into_items().collect();
+        let batch_a_items: Vec<_> = batch_a.items.clone();
         assert_eq!(
             batch_a_items,
             vec![
@@ -1181,9 +1239,7 @@ mod tests {
                 WithdrawalItem::new(staker3, 3)
             ]
         );
-        assert_eq!(batch_a.deployer(), &StacksAddress::burn_address(false));
-        assert_eq!(batch_b.deployer(), &StacksAddress::burn_address(false));
-        let batch_b_items: Vec<_> = batch_b.clone().into_items().collect();
+        let batch_b_items: Vec<_> = batch_b.items.clone();
         assert_eq!(batch_b_items, vec![WithdrawalItem::new(staker2, 2)]);
     }
 
@@ -1210,8 +1266,8 @@ mod tests {
         assert_eq!(batches.len(), 2);
         assert!(batches.iter().all(|batch| batch.signer_manager() == &sm));
 
-        let batch0_items: Vec<_> = batches[0].clone().into_items().collect();
-        let batch1_items: Vec<_> = batches[1].clone().into_items().collect();
+        let batch0_items: Vec<_> = batches[0].items.clone();
+        let batch1_items: Vec<_> = batches[1].items.clone();
         assert_eq!(batch0_items.len(), MAX_STAKERS_LENGTH);
         assert_eq!(batch1_items.len(), 1);
         assert_eq!(batch0_items[0], withdrawals[0].item);
