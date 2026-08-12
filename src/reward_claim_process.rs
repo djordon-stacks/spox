@@ -84,7 +84,7 @@ async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Resul
     for batch in batches {
         tracing::info!(
             "signer_manager" = %batch.signer_manager(),
-            "num_stakers" = %batch.stakers().len(),
+            "num_stakers" = %batch.num_stakers(),
             "processing process-reward-claims batch",
         );
         let payload = batch.tx_payload();
