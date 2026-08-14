@@ -28,6 +28,13 @@ importers:
       vitest-environment-clarinet:
         specifier: 3.0.2
         version: 3.0.2(@stacks/clarinet-sdk@3.23.1)(vitest@4.1.4(@types/node@24.12.2)(vite@8.0.8(@types/node@24.12.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)))
+    devDependencies:
+      '@vitest/expect':
+        specifier: 4.1.4
+        version: 4.1.4
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   tests:
     dependencies:
