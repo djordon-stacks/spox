@@ -35,7 +35,7 @@
 
 ;; A (list 100 uint) whose only job is to bound the get-pending-claims,
 ;; get-registrations, get-pending-withdrawals, and get-withdrawals folds to
-;; at most 100 iterations per call. 
+;; at most 100 iterations per call.
 ;; @format-ignore
 (define-constant PENDING_TICKS (list
     u0 u0 u0 u0 u0 u0 u0 u0 u0 u0

@@ -17,9 +17,7 @@
     "@types/node": "24.12.2",
     "chokidar-cli": "3.0.0",
     "vitest": "4.1.4",
-    "vitest-environment-clarinet": "3.0.2"
-  },
-  "devDependencies": {
+    "vitest-environment-clarinet": "3.0.2",
     "@vitest/expect": "4.1.4",
     "typescript": "5.9.3"
   }
