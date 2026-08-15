@@ -543,9 +543,9 @@
 ;; Walks the registration linked list from cursor, or from the head when
 ;; cursor is none, and returns up to 100 rows where the registration is
 ;; pending. Non-pending registrations are omitted, so a short or empty
-;; `rows` list does not mean the all pending registrations have been
-;; fetched. Use the returned `next` cursor, where `none` means the walk hit
-;; the tail. Pass `some key` as the next `cursor` to paginate all
+;; `rows` list does not mean all pending registrations have been fetched.
+;; Use the returned `next` cursor, where `none` means the walk hit the
+;; tail. Pass `some key` as the next `cursor` to paginate all
 ;; registrations.
 ;;
 ;; Parameters:
