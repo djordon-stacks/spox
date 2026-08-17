@@ -247,7 +247,7 @@ mod tests {
 
         // Setup our Stacks client
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = StacksClient::new(client_url, None).unwrap();
 
         // Setup our registry
         let registry = DepositAddressRegistry::new(
@@ -352,7 +352,7 @@ mod tests {
 
         // Setup our Stacks client
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = StacksClient::new(client_url, None).unwrap();
 
         // Setup our registry
         let registry = DepositAddressRegistry::new(

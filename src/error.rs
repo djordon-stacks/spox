@@ -56,6 +56,11 @@ pub enum Error {
     #[error("could not parse the provided URL: {0}")]
     InvalidUrl(#[source] url::ParseError),
 
+    /// The Stacks RPC auth token cannot be used as an HTTP `Authorization`
+    /// header value.
+    #[error("stacks rpc auth token is not a valid HTTP header value: {0}")]
+    InvalidStacksAuthToken(#[source] reqwest::header::InvalidHeaderValue),
+
     /// Poisoned mutex
     #[error("poisoned mutex")]
     PoisonedMutex,

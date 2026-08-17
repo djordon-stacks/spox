@@ -13,8 +13,11 @@ use clarity::types::chainstate::StacksAddress;
 use clarity::types::chainstate::StacksBlockId;
 use clarity::vm::types::{BuffData, SequenceData};
 use clarity::vm::{ClarityName, ContractName, Value};
+use reqwest::header::AUTHORIZATION;
 use reqwest::header::CONTENT_LENGTH;
 use reqwest::header::CONTENT_TYPE;
+use reqwest::header::HeaderMap;
+use reqwest::header::HeaderValue;
 use serde::{Deserialize, Deserializer};
 use url::Url;
 
@@ -59,12 +62,12 @@ pub struct CallReadResponse {
 
 impl CallReadResponse {
     /// Convert a call-read JSON body into a Clarity value.
-    /// 
+    ///
     /// You can only get cause or result in the response body, not both.
     /// https://github.com/stacks-network/stacks-core/blob/4.0.1/stackslib/src/net/api/fastcallreadonly.rs#L276-L302
     fn into_value(self) -> Result<Value, Error> {
         let Some(hex) = self.result else {
-            return Err(Error::ReadOnlyCallFailed(self.cause))
+            return Err(Error::ReadOnlyCallFailed(self.cause));
         };
         Value::try_deserialize_hex_untyped(&hex)
             .map_err(|error| Error::ClarityValueDeserialization(Box::new(error)))
@@ -195,11 +198,20 @@ pub struct StacksClient {
 }
 
 impl StacksClient {
-    /// Create a new instance of the Stacks client using the given
-    /// StacksSettings.
-    pub fn new(url: Url) -> Result<Self, Error> {
+    /// Create a new instance of the Stacks client.
+    ///
+    /// When `auth_token` is set, it is sent as the raw `Authorization` header
+    /// that stacks-core privileged RPC endpoints expect.
+    pub fn new(url: Url, auth_token: Option<&str>) -> Result<Self, Error> {
+        let mut headers = HeaderMap::new();
+        if let Some(token) = auth_token.filter(|token| !token.is_empty()) {
+            let val = HeaderValue::from_str(token).map_err(Error::InvalidStacksAuthToken)?;
+            headers.insert(AUTHORIZATION, val);
+        }
+
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .default_headers(headers)
             .build()?;
 
         Ok(Self { endpoint: url, client })
@@ -295,7 +307,6 @@ impl StacksClient {
         let response = self
             .client
             .post(url)
-            .header("authorization", "12345")
             .json(&body)
             .send()
             .await
@@ -431,7 +442,8 @@ impl TryFrom<&Settings> for StacksClient {
             .as_ref()
             .ok_or_else(|| Error::MissingStacksConfig)?;
 
-        StacksClient::new(stacks_config.rpc_endpoint.clone())
+        let auth_token = stacks_config.auth_token.as_deref();
+        StacksClient::new(stacks_config.rpc_endpoint.clone(), auth_token)
     }
 }
 
@@ -567,7 +579,7 @@ mod tests {
 
         // Setup our Stacks client
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = StacksClient::new(client_url, None).unwrap();
 
         let sbtc_deployer =
             StacksAddress::from_string("ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM").unwrap();
@@ -623,7 +635,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = StacksClient::new(client_url, None).unwrap();
 
         let account = client.get_account(&address).await.unwrap();
         assert_eq!(
@@ -671,7 +683,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url).unwrap();
+        let client = StacksClient::new(client_url, None).unwrap();
 
         let info = client.get_node_info().await.unwrap();
         assert_eq!(info.chain_id, blockstack_lib::core::CHAIN_ID_TESTNET);
@@ -686,6 +698,56 @@ mod tests {
             info.stacks_tip_consensus_hash,
             ConsensusHash::from_hex("dfe87cfd31c1a67fa8b989c83b79aa476e616758").unwrap()
         );
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn auth_token_is_sent_as_authorization_header() {
+        let raw_json_response = r#"{
+            "network_id": 2147483648,
+            "stacks_tip": "b5f9aa4423ffa7abb585fc00e2783c40225597ec112ee618db86ae23dbbbe88c",
+            "stacks_tip_consensus_hash": "dfe87cfd31c1a67fa8b989c83b79aa476e616758"
+        }"#;
+
+        let mut stacks_node_server = mockito::Server::new_async().await;
+        let mock = stacks_node_server
+            .mock("GET", "/v2/info")
+            .match_header("authorization", "s3cret")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(raw_json_response)
+            .expect(1)
+            .create();
+
+        let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
+        let client = StacksClient::new(client_url, Some("s3cret")).unwrap();
+
+        client.get_node_info().await.unwrap();
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn missing_auth_token_omits_authorization_header() {
+        let raw_json_response = r#"{
+            "network_id": 2147483648,
+            "stacks_tip": "b5f9aa4423ffa7abb585fc00e2783c40225597ec112ee618db86ae23dbbbe88c",
+            "stacks_tip_consensus_hash": "dfe87cfd31c1a67fa8b989c83b79aa476e616758"
+        }"#;
+
+        let mut stacks_node_server = mockito::Server::new_async().await;
+        let mock = stacks_node_server
+            .mock("GET", "/v2/info")
+            .match_header("authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(raw_json_response)
+            .expect(1)
+            .create();
+
+        let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
+        let client = StacksClient::new(client_url, None).unwrap();
+
+        client.get_node_info().await.unwrap();
         mock.assert();
     }
 }
