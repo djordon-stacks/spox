@@ -17,19 +17,16 @@ pub enum Error {
     BitcoinCoreRpcClient(#[source] jsonrpc::http::simple_http::Error, String),
 
     /// Could not serialize the clarity value to bytes.
-    ///
-    /// For some reason, InterpreterError does not implement
-    /// std::fmt::Display or std::error::Error, hence the debug log.
     #[error("clarity serialization error: {0:?}")]
-    ClarityValueSerialization(Box<clarity::vm::errors::InterpreterError>),
+    ClarityValueSerialization(Box<clarity::vm::types::serialization::SerializationError>),
 
     /// Could not create a clarity list. This shouldn't happen.
     #[error("clarity bad list: {0:?}")]
-    ClarityBadList(Box<clarity::vm::errors::Error>),
+    ClarityBadList(Box<clarity::vm::errors::ClarityTypeError>),
 
     /// Could not construct a clarity value.
     #[error("clarity construction error: {0:?}")]
-    ClarityTuple(Box<clarity::vm::errors::Error>),
+    ClarityTuple(Box<clarity::vm::errors::ClarityTypeError>),
 
     /// Missing an expected tuple entry. This shouldn't happen.
     #[error("missing an expected tuple entry: {0}")]
@@ -141,4 +138,8 @@ pub enum Error {
     /// Failed to parse a hex-encoded integer from a Stacks node response.
     #[error("could not parse hex integer: {0}")]
     ParseHexInt(#[source] std::num::ParseIntError),
+
+    /// Failed to parse a JSON response from the Stacks node.
+    #[error("failed to transform a PrincipalData into or from JSON: {0}")]
+    PrincipalDataSerdeJson(#[source] serde_json::Error),
 }

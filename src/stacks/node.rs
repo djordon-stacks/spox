@@ -389,8 +389,8 @@ impl StacksClient {
         let value = self
             .get_data_var(
                 sbtc_deployer,
-                &ContractName::from("sbtc-registry"),
-                &ClarityName::from("current-aggregate-pubkey"),
+                &ContractName::from_literal("sbtc-registry"),
+                &ClarityName::from_literal("current-aggregate-pubkey"),
             )
             .await?;
 
