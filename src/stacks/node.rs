@@ -31,7 +31,7 @@ pub struct DataVarResponse {
     pub data: Value,
 }
 
-/// The request body for a POST /v2/contracts/call-read/<contract-principal>/<contract-name>/<fn-name> request.
+/// The request body for a POST /v3/contracts/fast-call-read/<contract-principal>/<contract-name>/<fn-name> request.
 #[derive(Debug, serde::Serialize)]
 pub struct CallReadRequest {
     /// The simulated address of the sender.
@@ -40,12 +40,35 @@ pub struct CallReadRequest {
     pub arguments: Vec<String>,
 }
 
-/// The response from a POST /v2/contracts/call-read/<contract-principal>/<contract-name>/<fn-name> request.
+/// The response from a POST /v3/contracts/fast-call-read/<contract-principal>/<contract-name>/<fn-name>
+/// request.
+///
+/// There is an okay field here too, that we omit.
+/// https://github.com/stacks-network/stacks-core/blob/4.0.1/stackslib/src/net/api/callreadonly.rs#L52-L61
 #[derive(Debug, Deserialize)]
 pub struct CallReadResponse {
-    /// The result of the function call.
-    #[serde(deserialize_with = "clarity_value_deserializer")]
-    pub result: Value,
+    /// Whether the read-only function ran to completion.
+    pub okay: bool,
+    /// Hex-encoded Clarity value. Present when [`Self::okay`] is true.
+    #[serde(default)]
+    pub result: Option<String>,
+    /// VM error string. Present when [`Self::okay`] is false.
+    #[serde(default)]
+    pub cause: Option<String>,
+}
+
+impl CallReadResponse {
+    /// Convert a call-read JSON body into a Clarity value.
+    /// 
+    /// You can only get cause or result in the response body, not both.
+    /// https://github.com/stacks-network/stacks-core/blob/4.0.1/stackslib/src/net/api/fastcallreadonly.rs#L276-L302
+    fn into_value(self) -> Result<Value, Error> {
+        let Some(hex) = self.result else {
+            return Err(Error::ReadOnlyCallFailed(self.cause))
+        };
+        Value::try_deserialize_hex_untyped(&hex)
+            .map_err(|error| Error::ClarityValueDeserialization(Box::new(error)))
+    }
 }
 
 /// JSON body returned by GET /v2/accounts/<principal>.
@@ -240,7 +263,7 @@ impl StacksClient {
             .map(|tip| tip.to_string())
             .unwrap_or_else(|| "latest".to_string());
         let path = format!(
-            "/v2/contracts/call-read/{contract_principal}/{contract_name}/{fn_name}?tip={tip}"
+            "/v3/contracts/fast-call-read/{contract_principal}/{contract_name}/{fn_name}?tip={tip}"
         );
 
         let url = self
@@ -272,6 +295,7 @@ impl StacksClient {
         let response = self
             .client
             .post(url)
+            .header("authorization", "12345")
             .json(&body)
             .send()
             .await
@@ -283,7 +307,7 @@ impl StacksClient {
             .json::<CallReadResponse>()
             .await
             .map_err(Error::UnexpectedStacksResponse)
-            .map(|x| x.result)
+            .and_then(CallReadResponse::into_value)
     }
 
     /// Get the latest account info for the given address.
@@ -463,6 +487,45 @@ mod tests {
                 PublicKey::from_private_key(SECP256K1, &PrivateKey::generate(NetworkKind::Test))
             })
             .collect()
+    }
+
+    #[test]
+    fn call_read_response_deserializes_empty_page() {
+        let raw = r#"{"okay":true,"result":"0x070c00000002046e6578740904726f77730b00000000"}"#;
+        let value = serde_json::from_str::<CallReadResponse>(raw)
+            .unwrap()
+            .into_value()
+            .unwrap();
+
+        let expected = Value::okay(Value::Tuple(
+            clarity::vm::types::TupleData::from_data(vec![
+                (ClarityName::from_literal("next"), Value::none()),
+                (
+                    ClarityName::from_literal("rows"),
+                    Value::cons_list_unsanitized(Vec::new()).unwrap(),
+                ),
+            ])
+            .unwrap(),
+        ))
+        .unwrap();
+
+        assert_eq!(value, expected);
+    }
+
+    #[test]
+    fn call_read_response_cost_exceeded_is_an_error() {
+        let raw = r#"{"okay":false,"cause":"RuntimeCheck(CostBalanceExceeded(ExecutionCost { write_length: 0, write_count: 0, read_length: 206311, read_count: 7, runtime: 210725 }, ExecutionCost { write_length: 0, write_count: 0, read_length: 200000, read_count: 100, runtime: 1000000000 }))"}"#;
+        let err = serde_json::from_str::<CallReadResponse>(raw)
+            .unwrap()
+            .into_value()
+            .unwrap_err();
+
+        match err {
+            Error::ReadOnlyCallFailed(cause) => {
+                assert!(cause.is_some_and(|cause| cause.contains("CostBalanceExceeded")));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test_case(false; "some")]

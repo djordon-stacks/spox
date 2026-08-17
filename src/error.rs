@@ -16,6 +16,10 @@ pub enum Error {
     #[error("could not create RPC client to {1}: {0}")]
     BitcoinCoreRpcClient(#[source] jsonrpc::http::simple_http::Error, String),
 
+    /// Could not deserialize the clarity value from a hex-encoded string.
+    #[error("clarity deserialization error: {0:?}")]
+    ClarityValueDeserialization(Box<clarity::vm::types::serialization::SerializationError>),
+
     /// Could not serialize the clarity value to bytes.
     #[error("clarity serialization error: {0:?}")]
     ClarityValueSerialization(Box<clarity::vm::types::serialization::SerializationError>),
@@ -142,4 +146,10 @@ pub enum Error {
     /// Failed to parse a JSON response from the Stacks node.
     #[error("failed to transform a PrincipalData into or from JSON: {0}")]
     PrincipalDataSerdeJson(#[source] serde_json::Error),
+
+    /// A `/v3/contracts/fast-call-read` request returned `okay: false`.
+    ///
+    /// The node still answers HTTP 200; the Clarity VM error is in `cause`.
+    #[error("read-only stacks call failed: {0:?}")]
+    ReadOnlyCallFailed(Option<String>),
 }

@@ -890,7 +890,7 @@ mod tests {
         let mock = stacks_node_server
             .mock(
                 "POST",
-                "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest",
+                "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest",
             )
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [ClarityValue::none().serialize_to_hex().unwrap()]
@@ -958,7 +958,7 @@ mod tests {
         let mock = stacks_node_server
             .mock(
                 "POST",
-                "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest",
+                "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest",
             )
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [cursor_hex]
@@ -1006,7 +1006,7 @@ mod tests {
         let mock = stacks_node_server
             .mock(
                 "POST",
-                "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest",
+                "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip=latest",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -1078,7 +1078,7 @@ mod tests {
             .create();
 
         let path = format!(
-            "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip={tip}"
+            "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-claims?tip={tip}"
         );
 
         let empty_with_next = stacks_node_server
@@ -1322,7 +1322,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let path = "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip=latest";
+        let path = "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip=latest";
         let mut stacks_node_server = mockito::Server::new_async().await;
         let mock = stacks_node_server
             .mock("POST", path)
@@ -1387,7 +1387,7 @@ mod tests {
         let mock = stacks_node_server
             .mock(
                 "POST",
-                "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip=latest",
+                "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip=latest",
             )
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [cursor_hex]
@@ -1433,7 +1433,7 @@ mod tests {
         let mock = stacks_node_server
             .mock(
                 "POST",
-                "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip=latest",
+                "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip=latest",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -1511,7 +1511,7 @@ mod tests {
             .create();
 
         let path = format!(
-            "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip={tip}"
+            "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/get-pending-withdrawals?tip={tip}"
         );
 
         let empty_with_next = stacks_node_server

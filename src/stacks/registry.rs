@@ -238,7 +238,7 @@ mod tests {
         // Setup our mock server
         let mut stacks_node_server = mockito::Server::new_async().await;
         let mock = stacks_node_server
-            .mock("POST", "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/registry/get-next-address-id?tip=latest")
+            .mock("POST", "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/registry/get-next-address-id?tip=latest")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(&raw_json_response)
@@ -340,7 +340,7 @@ mod tests {
         .unwrap();
 
         let mock = stacks_node_server
-            .mock("POST", "/v2/contracts/call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/registry/get-addresses?tip=latest")
+            .mock("POST", "/v3/contracts/fast-call-read/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/registry/get-addresses?tip=latest")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "arguments": [serialized_request_ids]
             })))
