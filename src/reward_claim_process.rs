@@ -185,7 +185,7 @@ impl RewardClaimState {
         };
 
         // Let's go and get the current chain id.
-        let client = StacksClient::new(stacks.rpc_endpoint.clone(), stacks.auth_token.as_deref())?;
+        let client = StacksClient::new(stacks.rpc_endpoint.clone(), &stacks.auth_token)?;
         let info = client.get_node_info().await?;
         let wallet = StacksWallet::new(config.private_key, info.chain_id, 0);
 

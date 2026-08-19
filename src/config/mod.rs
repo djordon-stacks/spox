@@ -83,7 +83,7 @@ pub struct StacksConfig {
     pub rpc_endpoint: Url,
     /// Token sent as the `Authorization` header for stacks-core privileged
     /// RPC.
-    pub auth_token: Option<String>,
+    pub auth_token: String,
     /// The address of the deployer of the sBTC smart contracts.
     #[serde(deserialize_with = "stacks_address_deserializer")]
     pub sbtc_deployer: StacksAddress,
@@ -234,7 +234,7 @@ mod tests {
         assert!(settings.reward_claims.is_none());
         let stacks = settings.stacks.as_ref().unwrap();
         assert_eq!(stacks.rpc_endpoint, parse_url("http://127.0.0.1:20443"));
-        assert_eq!(stacks.auth_token.as_deref(), Some("12345"));
+        assert_eq!(stacks.auth_token, "12345");
     }
 
     #[test]

@@ -202,10 +202,10 @@ impl StacksClient {
     ///
     /// When `auth_token` is set, it is sent as the raw `Authorization` header
     /// that stacks-core privileged RPC endpoints expect.
-    pub fn new(url: Url, auth_token: Option<&str>) -> Result<Self, Error> {
+    pub fn new(url: Url, auth_token: &str) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
-        if let Some(token) = auth_token.filter(|token| !token.is_empty()) {
-            let val = HeaderValue::from_str(token).map_err(Error::InvalidStacksAuthToken)?;
+        if !auth_token.is_empty() {
+            let val = HeaderValue::from_str(auth_token).map_err(Error::InvalidStacksAuthToken)?;
             headers.insert(AUTHORIZATION, val);
         }
 
@@ -442,7 +442,7 @@ impl TryFrom<&Settings> for StacksClient {
             .as_ref()
             .ok_or_else(|| Error::MissingStacksConfig)?;
 
-        let auth_token = stacks_config.auth_token.as_deref();
+        let auth_token = &stacks_config.auth_token;
         StacksClient::new(stacks_config.rpc_endpoint.clone(), auth_token)
     }
 }
@@ -579,7 +579,7 @@ mod tests {
 
         // Setup our Stacks client
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url, None).unwrap();
+        let client = StacksClient::new(client_url, "").unwrap();
 
         let sbtc_deployer =
             StacksAddress::from_string("ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM").unwrap();
@@ -635,7 +635,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url, None).unwrap();
+        let client = StacksClient::new(client_url, "").unwrap();
 
         let account = client.get_account(&address).await.unwrap();
         assert_eq!(
@@ -683,7 +683,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url, None).unwrap();
+        let client = StacksClient::new(client_url, "").unwrap();
 
         let info = client.get_node_info().await.unwrap();
         assert_eq!(info.chain_id, blockstack_lib::core::CHAIN_ID_TESTNET);
@@ -720,7 +720,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url, Some("s3cret")).unwrap();
+        let client = StacksClient::new(client_url, "s3cret").unwrap();
 
         client.get_node_info().await.unwrap();
         mock.assert();
@@ -745,7 +745,7 @@ mod tests {
             .create();
 
         let client_url = url::Url::parse(stacks_node_server.url().as_str()).unwrap();
-        let client = StacksClient::new(client_url, None).unwrap();
+        let client = StacksClient::new(client_url, "").unwrap();
 
         client.get_node_info().await.unwrap();
         mock.assert();

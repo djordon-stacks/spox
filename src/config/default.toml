@@ -94,7 +94,7 @@ rpc_endpoint = "http://127.0.0.1:20443"
 
 # Token sent as the Authorization header for stacks-core privileged RPC.
 #
-# Required: false
+# Required: true (when the this stanza is present)
 # Environment: SPOX_STACKS__AUTH_TOKEN
 auth_token = "12345"
 
