@@ -44,14 +44,12 @@ pub struct CallReadRequest {
 }
 
 /// The response from a POST /v3/contracts/fast-call-read/<contract-principal>/<contract-name>/<fn-name>
-/// request.
+/// and POST /v2/contracts/call-read/<contract-principal>/<contract-name>/<fn-name> requests.
 ///
 /// There is an okay field here too, that we omit.
 /// https://github.com/stacks-network/stacks-core/blob/4.0.1/stackslib/src/net/api/callreadonly.rs#L52-L61
 #[derive(Debug, Deserialize)]
 pub struct CallReadResponse {
-    /// Whether the read-only function ran to completion.
-    pub okay: bool,
     /// Hex-encoded Clarity value. Present when [`Self::okay`] is true.
     #[serde(default)]
     pub result: Option<String>,
