@@ -24,7 +24,7 @@ pub fn make_trait_identifier(contract: QualifiedContractIdentifier) -> Box<Trait
 pub trait IntoContractCall: Sized {
     /// The specific function name that relates to this struct.
     const FUNCTION_NAME: &'static str;
-    /// The stacks address that deployed the contract.
+    /// The identifier of the registry contract.
     fn contract_identifier(&self) -> &QualifiedContractIdentifier;
     /// The arguments to the clarity function.
     fn into_contract_args(self) -> Vec<ClarityValue>;

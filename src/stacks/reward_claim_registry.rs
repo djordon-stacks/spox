@@ -282,7 +282,7 @@ impl RewardClaimsBatch {
 impl IntoContractCall for RewardClaimsBatch {
     /// The specific function name that relates to this struct.
     const FUNCTION_NAME: &'static str = "process-reward-claims";
-    /// The stacks address that deployed the contract.
+    /// The identifier of the registry the contract.
     fn contract_identifier(&self) -> &QualifiedContractIdentifier {
         &self.registry_contract
     }
@@ -345,7 +345,7 @@ impl WithdrawalsBatch {
 impl IntoContractCall for WithdrawalsBatch {
     /// The specific function name that relates to this struct.
     const FUNCTION_NAME: &'static str = "settle-pending-withdrawals";
-    /// The stacks address that deployed the contract.
+    /// The identifier of the registry the contract.
     fn contract_identifier(&self) -> &QualifiedContractIdentifier {
         &self.registry_contract
     }
