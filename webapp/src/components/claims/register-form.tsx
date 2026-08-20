@@ -586,7 +586,7 @@ export function RegisterForm() {
         )}
 
         {!registered && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
             <label className="claims-field">
               <FieldLabel help="The first pox-5 reward cycle covered by this registration. Defaults to the staker's first eligible reward cycle.">
                 Start reward cycle
