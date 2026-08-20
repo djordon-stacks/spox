@@ -109,7 +109,7 @@
 (map-set admins tx-sender true)
 
 ;; This is the amount of uSTX escrowed per claim installment when buying
-(define-data-var fee-per-cycle uint u100000)
+(define-data-var fee-per-cycle uint u10000)
 
 ;; Reentrancy guard: prevents cross-function re-entry through signer-manager
 ;; trait calls (mirrors pox-5's signer-manager-call-active).
