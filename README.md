@@ -13,6 +13,16 @@ Those details are compactly encoded within the deposit transaction itself, and m
 The `spox` application uses the deposit-transaction data in its configuration file and/or an on-chain registry
 to monitor the Bitcoin network for matching transactions and automatically notify Emily when a confirmed deposit appears.
 
+## Reward claims web app
+
+[`webapp/`](webapp/) is a static Next.js site for registering a [pox-5](https://docs.stacks.co/pox-5/development/rewards) stake with the reward-claim registry: load staking details from chain, register prepaid claims, add more claims, or cancel and reclaim escrow. See [webapp/README.md](webapp/README.md) for environment variables, local devnet setup, and GitHub Pages deployment.
+
+```bash
+(cd webapp && pnpm install && pnpm dev)
+```
+
+Open http://localhost:3001.
+
 ## Building
 
 To build `spox`, run:
@@ -163,21 +173,8 @@ cargo run -- -c tests/registry/spox.toml get-registry-address 0 -n regtest
 
 #### Web app
 
-In `webapp/` there is a simple web app to interact with the registry. See [webapp/README.md](webapp/README.md) for more details.
+The web app in `webapp/` is focused on [pox-5 reward claims](https://docs.stacks.co/pox-5/development/rewards). 
 
-Run the web app:
-```bash
-(cd webapp && pnpm dev)
-```
-
-Fund your wallet, e.g. (from sBTC codebase):
-```bash
-# Change the address to the wallet you will use with the web app
-cargo run -p signer --bin demo-cli fund-stx --recipient ST2FQWJMF9CGPW34ZWK8FEPNK072NEV1VKRNBBMJ9
-```
-
-Use the web app at http://localhost:3001 to create and register your address.
-After a bit, `spox` should log about the new address.
 
 #### Complete the deposit
 
