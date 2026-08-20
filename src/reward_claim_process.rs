@@ -21,10 +21,13 @@ use crate::stacks::reward_claim_registry::RewardClaimRegistry;
 use crate::stacks::transaction::IntoContractCall as _;
 use crate::stacks::wallet::StacksWallet;
 
-/// The transaction fee per staker in contract calls against the
-/// registry.
+/// The transaction fee per element in batch contract calls against the
+/// registry. For `process-reward-claims` the element is a staker, while
+/// for `settle-pending-withdrawals` the element is an unsettled
+/// withdrawal.
+///
 /// TODO: remove and fetch the market fee rate from the node.
-const PER_STAKER_TX_FEE: u64 = 2000;
+const PER_ITEM_TX_FEE: u64 = 2000;
 
 /// The base transaction fee for contract calls against the registry.
 const BASE_TX_FEE: u64 = 3000;
@@ -92,7 +95,7 @@ async fn process_claims(state: &RewardClaimState, chain_tip: &BlockRef) -> Resul
             "processing process-reward-claims batch",
         );
 
-        let tx_fee = num_stakers * PER_STAKER_TX_FEE + BASE_TX_FEE;
+        let tx_fee = num_stakers * PER_ITEM_TX_FEE + BASE_TX_FEE;
         let payload = batch.into_tx_payload();
         let tx = state.wallet.sign_tx(payload, tx_fee);
 
@@ -143,7 +146,7 @@ async fn process_withdrawals(state: &RewardClaimState, chain_tip: &BlockRef) -> 
             "processing settle-pending-withdrawals batch",
         );
 
-        let tx_fee = num_withdrawals * PER_STAKER_TX_FEE + BASE_TX_FEE;
+        let tx_fee = num_withdrawals * PER_ITEM_TX_FEE + BASE_TX_FEE;
         let payload = batch.into_tx_payload();
         let tx = state.wallet.sign_tx(payload, tx_fee);
 
