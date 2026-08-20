@@ -40,7 +40,7 @@ describe("stacksExplorerContractUrlForConfig", () => {
       apiUrl: "https://api.mainnet.hiro.so",
     });
     expect(stacksExplorerContractUrlForConfig(contract, config)).toBe(
-      `https://explorer.hiro.so/address/${contract}`,
+      `https://explorer.hiro.so/txid/${contract}`,
     );
   });
 
@@ -50,7 +50,7 @@ describe("stacksExplorerContractUrlForConfig", () => {
       apiUrl: "https://api.testnet.hiro.so",
     });
     expect(stacksExplorerContractUrlForConfig(contract, config)).toBe(
-      `https://explorer.hiro.so/address/${contract}?chain=testnet`,
+      `https://explorer.hiro.so/txid/${contract}?chain=testnet`,
     );
   });
 
@@ -60,7 +60,7 @@ describe("stacksExplorerContractUrlForConfig", () => {
       apiUrl: "http://localhost:3999",
     });
     expect(stacksExplorerContractUrlForConfig(contract, config)).toBe(
-      `http://localhost:3020/address/${contract}?chain=testnet&api=http%3A%2F%2Flocalhost%3A3999`,
+      `http://localhost:3020/txid/${contract}?chain=testnet&api=http%3A%2F%2Flocalhost%3A3999&ssr=false`,
     );
   });
 

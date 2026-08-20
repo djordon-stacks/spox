@@ -203,12 +203,12 @@ export function stacksExplorerContractUrlForConfig(
 
   if (config.network === "devnet") {
     const api = encodeURIComponent(config.apiUrl);
-    return `http://localhost:3020/address/${trimmed}?chain=testnet&api=${api}`;
+    return `http://localhost:3020/txid/${trimmed}?chain=testnet&api=${api}&ssr=false`;
   }
 
   const base = "https://explorer.hiro.so";
   if (config.network === "mainnet") {
-    return `${base}/address/${trimmed}`;
+    return `${base}/txid/${trimmed}`;
   }
-  return `${base}/address/${trimmed}?chain=${config.network}`;
+  return `${base}/txid/${trimmed}?chain=${config.network}`;
 }

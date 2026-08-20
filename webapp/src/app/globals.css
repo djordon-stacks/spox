@@ -206,6 +206,7 @@ body {
   --claims-warn: #b45309;
   --claims-error: #b91c1c;
   --claims-ok: #047857;
+  --claims-control-h: 2.5rem;
 
   min-height: 100vh;
   color: var(--claims-ink);
@@ -364,8 +365,23 @@ body {
   color: var(--claims-muted);
 }
 
-.claims-field legend {
-  padding: 0;
+.claims-cadence {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.claims-cadence .claims-pill {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  cursor: pointer;
+  font-weight: 600;
+  appearance: none;
+  color: var(--claims-muted);
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
 
 .claims-field-label {
@@ -447,23 +463,35 @@ body {
   color: var(--claims-muted);
 }
 
-.claims-input {
-  width: 100%;
+.claims-input,
+.claims-cadence .claims-pill {
+  box-sizing: border-box;
+  height: var(--claims-control-h);
+  padding: 0 0.9rem;
   border-radius: 0.75rem;
-  padding: 0.75rem 0.9rem;
   font-size: 0.875rem;
-  font-weight: 400;
+  line-height: 1;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--claims-ink);
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid var(--claims-line);
+}
+
+.claims-input {
+  width: 100%;
+  color: var(--claims-ink);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .claims-input:focus {
   outline: none;
   border-color: rgba(15, 118, 110, 0.45);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.claims-cadence .claims-pill-active {
+  color: var(--claims-accent-deep);
+  background: rgba(15, 118, 110, 0.1);
+  border-color: rgba(15, 118, 110, 0.22);
 }
 
 .claims-btn-primary {
@@ -523,25 +551,6 @@ body {
 .claims-btn-ghost:hover {
   color: var(--claims-ink);
   background: rgba(21, 32, 43, 0.04);
-}
-
-.claims-pill {
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.65rem;
-  cursor: pointer;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--claims-muted);
-  background: rgba(21, 32, 43, 0.03);
-  border: 1px solid transparent;
-  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-}
-.claims-pill-active {
-  color: var(--claims-accent-deep);
-  background: rgba(15, 118, 110, 0.1);
-  border-color: rgba(15, 118, 110, 0.22);
 }
 
 .claims-addr {

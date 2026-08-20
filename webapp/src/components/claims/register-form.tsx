@@ -600,13 +600,11 @@ export function RegisterForm() {
               />
             </label>
 
-            <fieldset className="claims-field">
-              <legend>
-                <FieldLabel help="Defaults from the staker's pox-5 position: bonded positions (some bond index) use twice per cycle; STX-only stakes (no bond index) use once. You can override either way.">
-                  Claim cadence
-                </FieldLabel>
-              </legend>
-              <div className="flex gap-2 mt-1">
+            <div className="claims-field">
+              <FieldLabel help="Defaults from the staker's pox-5 position: bonded positions (some bond index) use twice per cycle; STX-only stakes (no bond index) use once. You can override either way.">
+                Claim cadence
+              </FieldLabel>
+              <div className="claims-cadence">
                 <button
                   type="button"
                   className={`claims-pill ${oneClaimPerCycle ? "claims-pill-active" : ""}`}
@@ -622,7 +620,7 @@ export function RegisterForm() {
                   Twice per cycle
                 </button>
               </div>
-            </fieldset>
+            </div>
           </div>
         )}
 
