@@ -61,7 +61,7 @@ pnpm build
 pnpm start   # serves out/ on port 3001
 ```
 
-For a project GitHub Pages site, set `NEXT_PUBLIC_BASE_PATH` to the repo name (e.g. `/spox`) before building. The workflow [`.github/workflows/deploy-webapp-pages.yaml`](../.github/workflows/deploy-webapp-pages.yaml) builds and deploys `webapp/out` on pushes to `main` that touch `webapp/**`.
+For a project GitHub Pages site, set `NEXT_PUBLIC_BASE_PATH` to the repo name (e.g. `/spox`) before building. The workflow [`.github/workflows/deploy-webapp-pages.yaml`](../.github/workflows/deploy-webapp-pages.yaml) builds and deploys `webapp/out` when triggered manually from the Actions tab (any branch).
 
 Configure optional repository variables:
 

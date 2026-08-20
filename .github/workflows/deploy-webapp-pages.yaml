@@ -1,0 +1,66 @@
+name: Deploy webapp to GitHub Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-webapp
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24.14.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - name: Checkout Repository
+        id: checkout_repository
+        uses: stacks-sbtc/actions/checkout@ed353a33594a2fa97ea6702d838e4a935cce374d
+
+      - name: Setup Pnpm
+        id: setup_pnpm
+        uses: stacks-sbtc/actions/setup-pnpm@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          version: 9
+
+      - name: Setup Node
+        id: setup_node
+        uses: stacks-sbtc/actions/setup-node@ed353a33594a2fa97ea6702d838e4a935cce374d
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install
+        run: pnpm install
+
+      - name: Build static export
+        env:
+          # Project Pages site under /spox — change if the repo name differs.
+          NEXT_PUBLIC_BASE_PATH: /spox
+          NEXT_PUBLIC_NETWORK: ${{ vars.WEBAPP_NETWORK || 'testnet' }}
+          NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT: ${{ vars.WEBAPP_CLAIMS_REGISTRY_CONTRACT }}
+          NEXT_PUBLIC_STACKS_API_URL: ${{ vars.WEBAPP_STACKS_API_URL }}
+        run: pnpm build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: webapp/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
