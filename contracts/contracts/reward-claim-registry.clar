@@ -86,7 +86,7 @@
 ;; call was in flight (same pattern as pox-5's ERR_REENTRANT_CALL).
 (define-constant ERR_REENTRANT_CALL (err u612))
 
-;; A (list 100 uint) whose only job is to bound the get-pending-claims,
+;; A (list 100 uint) whose job is to bound the get-pending-claims,
 ;; get-registrations, get-pending-withdrawals, and get-withdrawals folds to
 ;; at most 100 iterations per call.
 ;; @format-ignore
@@ -136,20 +136,22 @@
         signer-manager: principal,
     }
     {
+        ;; The bond index of the staker's pox-5 position. None means the
+        ;; position is an STX-only stake.
         bond-index: (optional uint),
+        ;; The number of remaining prepaid claim installments.
         remaining-claims: uint,
-        ;; When true, advance by two distribution cycles so at most one claim
-        ;; runs per reward cycle, seeded on the second half. When false,
-        ;; advance by one so up to two claims run per reward cycle, seeded on
-        ;; the first half, jumping to the next reward cycle's first half when
-        ;; catching up past a finished cycle.
+        ;; When true, advance by two distribution cycles so at most one
+        ;; claim runs per reward cycle. When false, up to two claims run
+        ;; per reward cycle.
         one-claim-per-reward-cycle: bool,
         ;; The next distribution cycle this registration will settle.
         ;; Pending when this value is less than current-distribution-cycle and
         ;; calculate-rewards has covered through the end of this distribution.
         next-claim-distribution: uint,
-        ;; STX held by this contract for unconsumed installments. Burned one
-        ;; installment at a time on advance; refunded to the staker on cancel.
+        ;; The STX held by this contract for unconsumed installments.
+        ;; Burned one installment at a time per processed claim. Note that
+        ;; this amount is refunded to the staker when they cancel.
         prepaid-ustx: uint,
     }
 )
