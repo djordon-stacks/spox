@@ -13,13 +13,13 @@ import { Cl, Pc, type ClarityValue, type PostCondition } from "@stacks/transacti
 import { useClaimsConfig } from "@/components/claims/claims-config-provider";
 import { useWallet } from "@/components/wallet-provider";
 import {
-  fetchFeePerCycle,
+  fetchFeePerClaim,
   fetchPosition,
   fetchRegistration,
   type StakerRegistration,
 } from "@/lib/claims-api";
 import {
-  MAX_CLAIM_CYCLES,
+  MAX_CLAIM_INSTALLMENTS,
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
@@ -94,7 +94,7 @@ export function RegisterForm() {
   const [claimCount, setClaimCount] = useState("");
   const claimCountRef = useRef(claimCount);
   claimCountRef.current = claimCount;
-  const [feePerCycle, setFeePerCycle] = useState<bigint | null>(null);
+  const [feePerClaim, setFeePerClaim] = useState<bigint | null>(null);
   const [loadingFeeRate, setLoadingFeeRate] = useState(false);
   const [positionNote, setPositionNote] = useState("");
   const [positionFound, setPositionFound] = useState(false);
@@ -121,15 +121,15 @@ export function RegisterForm() {
 
   const refreshFeeRate = useCallback(async () => {
     if (!config.claimsContract) {
-      setFeePerCycle(null);
+      setFeePerClaim(null);
       return;
     }
     setLoadingFeeRate(true);
     try {
-      const fee = await fetchFeePerCycle(config, BOOT_SENDER);
-      setFeePerCycle(fee);
+      const fee = await fetchFeePerClaim(config, BOOT_SENDER);
+      setFeePerClaim(fee);
     } catch {
-      setFeePerCycle(null);
+      setFeePerClaim(null);
     } finally {
       setLoadingFeeRate(false);
     }
@@ -160,10 +160,10 @@ export function RegisterForm() {
       const [position, price] = await Promise.all([
         fetchPosition(config, staker.trim()),
         config.claimsContract
-          ? fetchFeePerCycle(config, BOOT_SENDER).catch(() => null)
+          ? fetchFeePerClaim(config, BOOT_SENDER).catch(() => null)
           : Promise.resolve(null),
       ]);
-      if (price !== null) setFeePerCycle(price);
+      if (price !== null) setFeePerClaim(price);
       const feeNote =
         price === null
           ? " The registry fee is unavailable until the claims contract is deployed; enter the fee when it is known."
@@ -222,9 +222,9 @@ export function RegisterForm() {
     try {
       const [row, price] = await Promise.all([
         fetchRegistration(config, staker.trim(), signerManager.trim()),
-        fetchFeePerCycle(config, BOOT_SENDER).catch(() => null),
+        fetchFeePerClaim(config, BOOT_SENDER).catch(() => null),
       ]);
-      if (price !== null) setFeePerCycle(price);
+      if (price !== null) setFeePerClaim(price);
 
       if (!row) {
         setRegistration(null);
@@ -250,55 +250,55 @@ export function RegisterForm() {
   const syncFeeFromClaimCount = useCallback(
     (countInput: string) => {
       setClaimCount(countInput);
-      if (!feePerCycle) return;
+      if (!feePerClaim) return;
       const parsed = Number.parseInt(countInput.trim(), 10);
       if (!Number.isFinite(parsed) || parsed <= 0) {
         setFeeStx("");
         return;
       }
-      const capped = BigInt(Math.min(parsed, Number(MAX_CLAIM_CYCLES)));
+      const capped = BigInt(Math.min(parsed, Number(MAX_CLAIM_INSTALLMENTS)));
       setFeeStx(
-        formatStxFromMicro(feeMicroForClaimCount(capped, feePerCycle)),
+        formatStxFromMicro(feeMicroForClaimCount(capped, feePerClaim)),
       );
     },
-    [feePerCycle],
+    [feePerClaim],
   );
 
   const handleFeeStxChange = useCallback(
     (value: string) => {
       setFeeStx(value);
-      if (!feePerCycle) return;
+      if (!feePerClaim) return;
       const micro = parseStxToMicro(value);
       if (micro === null || micro <= 0n) {
         setClaimCount("");
         return;
       }
-      const raw = micro / feePerCycle;
+      const raw = micro / feePerClaim;
       setClaimCount(raw > 0n ? raw.toString() : "");
     },
-    [feePerCycle],
+    [feePerClaim],
   );
 
   useEffect(() => {
     const countInput = claimCountRef.current;
-    if (!feePerCycle || !countInput.trim()) return;
+    if (!feePerClaim || !countInput.trim()) return;
     const parsed = Number.parseInt(countInput.trim(), 10);
     if (!Number.isFinite(parsed) || parsed <= 0) return;
-    const capped = BigInt(Math.min(parsed, Number(MAX_CLAIM_CYCLES)));
+    const capped = BigInt(Math.min(parsed, Number(MAX_CLAIM_INSTALLMENTS)));
     setFeeStx(
-      formatStxFromMicro(feeMicroForClaimCount(capped, feePerCycle)),
+      formatStxFromMicro(feeMicroForClaimCount(capped, feePerClaim)),
     );
-  }, [feePerCycle]);
+  }, [feePerClaim]);
 
   const feeMicro = useMemo(() => parseStxToMicro(feeStx), [feeStx]);
 
   const cyclesBought = useMemo(() => {
-    if (feeMicro === null || feePerCycle === null || feePerCycle === 0n) {
+    if (feeMicro === null || feePerClaim === null || feePerClaim === 0n) {
       return null;
     }
-    const raw = feeMicro / feePerCycle;
-    return raw > MAX_CLAIM_CYCLES ? MAX_CLAIM_CYCLES : raw;
-  }, [feeMicro, feePerCycle]);
+    const raw = feeMicro / feePerClaim;
+    return raw > MAX_CLAIM_INSTALLMENTS ? MAX_CLAIM_INSTALLMENTS : raw;
+  }, [feeMicro, feePerClaim]);
 
   const submitContractCall = useCallback(
     async (args: {
@@ -550,7 +550,7 @@ export function RegisterForm() {
               label="Remaining claims"
               help="How many claim attempts are still prepaid."
             >
-              {registration.remainingCycles.toString()}
+              {registration.remainingClaims.toString()}
             </SummaryItem>
             <SummaryItem
               label="Remaining escrow"
@@ -637,13 +637,13 @@ export function RegisterForm() {
           {loadingFeeRate && (
             <p className="claims-field-hint">Loading fee rate…</p>
           )}
-          {!loadingFeeRate && feePerCycle !== null && (
+          {!loadingFeeRate && feePerClaim !== null && (
             <p className="claims-field-hint">
-              On-chain rate: {formatStxFromMicro(feePerCycle)} STX per claim.
+              On-chain rate: {formatStxFromMicro(feePerClaim)} STX per claim.
             </p>
           )}
           {!loadingFeeRate &&
-            feePerCycle === null &&
+            feePerClaim === null &&
             !config.claimsContract && (
               <p className="claims-field-hint">
                 Set the registry contract to fetch the on-chain fee rate.
@@ -651,9 +651,9 @@ export function RegisterForm() {
             )}
 
           <div
-            className={`grid gap-4 mt-2 ${feePerCycle !== null ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
+            className={`grid gap-4 mt-2 ${feePerClaim !== null ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
           >
-            {feePerCycle !== null && (
+            {feePerClaim !== null && (
               <label className="claims-field">
                 <span className="claims-field-sublabel">Number of claims</span>
                 <input
@@ -672,8 +672,8 @@ export function RegisterForm() {
                 value={feeStx}
                 onChange={(e) => handleFeeStxChange(e.target.value)}
                 placeholder={
-                  feePerCycle !== null
-                    ? formatStxFromMicro(feePerCycle)
+                  feePerClaim !== null
+                    ? formatStxFromMicro(feePerClaim)
                     : "0.1"
                 }
                 inputMode="decimal"
@@ -683,7 +683,7 @@ export function RegisterForm() {
           <span className="claims-field-hint">
             Escrows whole installments only
             {cyclesBought !== null
-              ? ` — ${registered ? "adds" : "buys"} ${cyclesBought.toString()} claim${cyclesBought === 1n ? "" : "s"} (max ${MAX_CLAIM_CYCLES} per call)`
+              ? ` — ${registered ? "adds" : "buys"} ${cyclesBought.toString()} claim${cyclesBought === 1n ? "" : "s"} (max ${MAX_CLAIM_INSTALLMENTS} per call)`
               : ""}
             .
           </span>

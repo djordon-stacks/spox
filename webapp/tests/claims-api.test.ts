@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { Cl, cvToHex } from "@stacks/transactions";
-import { fetchFeePerCycle, fetchPosition, fetchRegistration } from "../src/lib/claims-api";
+import { fetchFeePerClaim, fetchPosition, fetchRegistration } from "../src/lib/claims-api";
 import type { ClaimsConfig } from "../src/lib/claims-config";
 import { resolveClaimsConfig } from "../src/lib/claims-config";
 
@@ -26,7 +26,7 @@ describe("read-only call errors", () => {
       throw new TypeError("fetch failed");
     });
 
-    await expect(fetchFeePerCycle(devnetConfig(), "ST1234")).rejects.toThrow(
+    await expect(fetchFeePerClaim(devnetConfig(), "ST1234")).rejects.toThrow(
       /Cannot reach the Stacks API at http:\/\/localhost:3999/,
     );
   });
@@ -40,7 +40,7 @@ describe("read-only call errors", () => {
       }),
     );
 
-    const error = await fetchFeePerCycle(devnetConfig(), "ST1234").catch(
+    const error = await fetchFeePerClaim(devnetConfig(), "ST1234").catch(
       (e: Error) => e,
     );
 
@@ -58,7 +58,7 @@ describe("read-only call errors", () => {
       }),
     );
 
-    await expect(fetchFeePerCycle(devnetConfig(), "ST1234")).resolves.toBe(
+    await expect(fetchFeePerClaim(devnetConfig(), "ST1234")).resolves.toBe(
       250000n,
     );
   });
@@ -175,7 +175,7 @@ describe("registry registration lookup", () => {
             Cl.some(
               Cl.tuple({
                 "bond-index": Cl.some(Cl.uint(7)),
-                "remaining-cycles": Cl.uint(12),
+                "remaining-claims": Cl.uint(12),
                 "one-claim-per-reward-cycle": Cl.bool(false),
                 "next-claim-distribution": Cl.uint(240),
                 "prepaid-ustx": Cl.uint(1_200_000),
@@ -200,7 +200,7 @@ describe("registry registration lookup", () => {
       ),
     ).resolves.toEqual({
       bondIndex: 7n,
-      remainingCycles: 12n,
+      remainingClaims: 12n,
       oneClaimPerCycle: false,
       nextClaimDistribution: 240n,
       nextClaimBurnHeight: 850_100n,

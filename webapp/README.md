@@ -29,7 +29,7 @@ Open [http://localhost:3001](http://localhost:3001). `/claims` serves the same i
 ### Using the claims page
 
 1. **Enter a staker address** — any Stacks account; you do not need to connect its wallet to read state.
-2. **Load staking details** — reads the live pox-5 position and fills signer-manager, start cycle, and claim cadence (once per cycle for STX-only stakes, twice when a bond index is present). If the registry is deployed, also fetches `get-fee-per-cycle`; otherwise enter the fee manually.
+2. **Load staking details** — reads the live pox-5 position and fills signer-manager, start cycle, and claim cadence (once per cycle for STX-only stakes, twice when a bond index is present). If the registry is deployed, also fetches `get-fee-per-claim`; otherwise enter the fee manually.
 3. **Load registration** — separate button; requires staker + signer-manager. Calls `get-registration` on the registry. Clears any staking-details note. If no row exists, the UI explains that registration requires a live pox-5 stake under that signer-manager.
 4. **Register** — connect the staker wallet and submit `register-for-claims` with prepaid STX for the chosen number of cycles.
 5. **Manage an existing registration** — summary shows remaining claims, remaining escrow, cadence, next distribution height, and bond index. **Add claims** prepays more cycles; **Cancel registration** refunds remaining escrow (staker signature required).

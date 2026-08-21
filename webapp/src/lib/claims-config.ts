@@ -169,7 +169,8 @@ export function stacksExplorerTxUrlForConfig(
 }
 
 export const MICRO_STX = 1_000_000n;
-export const MAX_CLAIM_CYCLES = 192n;
+/** Matches reward-claim-registry MAX_CLAIM_INSTALLMENTS. */
+export const MAX_CLAIM_INSTALLMENTS = 192n;
 
 export function formatStxFromMicro(micro: bigint): string {
   const whole = micro / MICRO_STX;
@@ -189,9 +190,9 @@ export function parseStxToMicro(input: string): bigint | null {
 /** STX escrow for a whole number of prepaid claim installments. */
 export function feeMicroForClaimCount(
   claimCount: bigint,
-  feePerCycle: bigint,
+  feePerClaim: bigint,
 ): bigint {
-  return claimCount * feePerCycle;
+  return claimCount * feePerClaim;
 }
 
 export function stacksExplorerContractUrlForConfig(

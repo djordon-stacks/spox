@@ -20,7 +20,7 @@ export interface StakerPosition {
 
 export interface StakerRegistration {
   bondIndex: bigint | null;
-  remainingCycles: bigint;
+  remainingClaims: bigint;
   oneClaimPerCycle: boolean;
   nextClaimDistribution: bigint;
   nextClaimBurnHeight: bigint | null;
@@ -131,14 +131,14 @@ function describeReadOnlyError(
 }
 
 /** Fee per claim installment in micro-STX. */
-export async function fetchFeePerCycle(
+export async function fetchFeePerClaim(
   config: ClaimsConfig,
   senderAddress: string,
 ): Promise<bigint> {
   const result = await callReadOnly(
     config,
     config.claimsContract,
-    "get-fee-per-cycle",
+    "get-fee-per-claim",
     [],
     senderAddress,
   );
@@ -243,7 +243,7 @@ export async function fetchRegistration(
 
   return {
     bondIndex: optionalUint(tuple.value["bond-index"]),
-    remainingCycles: uintToBigInt(tuple.value["remaining-cycles"]),
+    remainingClaims: uintToBigInt(tuple.value["remaining-claims"]),
     oneClaimPerCycle: boolValue(tuple.value["one-claim-per-reward-cycle"]),
     nextClaimDistribution,
     nextClaimBurnHeight,
