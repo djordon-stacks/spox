@@ -739,6 +739,14 @@ body {
   color: inherit;
   font-weight: 650;
   text-underline-offset: 2px;
+  text-decoration: underline;
+}
+button.claims-link {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
 }
 
 .claims-dev-collapsed {

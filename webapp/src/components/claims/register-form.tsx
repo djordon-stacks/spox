@@ -96,6 +96,7 @@ export function RegisterForm() {
   claimCountRef.current = claimCount;
   const [feePerClaim, setFeePerClaim] = useState<bigint | null>(null);
   const [loadingFeeRate, setLoadingFeeRate] = useState(false);
+  const [feeRateError, setFeeRateError] = useState("");
   const [positionNote, setPositionNote] = useState("");
   const [positionFound, setPositionFound] = useState(false);
   const [registration, setRegistration] = useState<StakerRegistration | null>(
@@ -122,14 +123,17 @@ export function RegisterForm() {
   const refreshFeeRate = useCallback(async () => {
     if (!config.claimsContract) {
       setFeePerClaim(null);
+      setFeeRateError("");
       return;
     }
     setLoadingFeeRate(true);
+    setFeeRateError("");
     try {
       const fee = await fetchFeePerClaim(config, BOOT_SENDER);
       setFeePerClaim(fee);
-    } catch {
+    } catch (e) {
       setFeePerClaim(null);
+      setFeeRateError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoadingFeeRate(false);
     }
@@ -163,7 +167,10 @@ export function RegisterForm() {
           ? fetchFeePerClaim(config, BOOT_SENDER).catch(() => null)
           : Promise.resolve(null),
       ]);
-      if (price !== null) setFeePerClaim(price);
+      if (price !== null) {
+        setFeePerClaim(price);
+        setFeeRateError("");
+      }
       const feeNote =
         price === null
           ? " The registry fee is unavailable until the claims contract is deployed; enter the fee when it is known."
@@ -224,7 +231,10 @@ export function RegisterForm() {
         fetchRegistration(config, staker.trim(), signerManager.trim()),
         fetchFeePerClaim(config, BOOT_SENDER).catch(() => null),
       ]);
-      if (price !== null) setFeePerClaim(price);
+      if (price !== null) {
+        setFeePerClaim(price);
+        setFeeRateError("");
+      }
 
       if (!row) {
         setRegistration(null);
@@ -628,25 +638,42 @@ export function RegisterForm() {
           <FieldLabel
             help={
               registered
-                ? "Prepay for additional claim installments."
-                : "Prepay for claim installments."
+                ? "Enter how many claim installments to buy. Escrow is calculated from the on-chain fee per claim (get-fee-per-claim)."
+                : "Enter how many claim installments to prepay. Escrow is calculated from the on-chain fee per claim (get-fee-per-claim)."
             }
           >
             Prepaid claims
           </FieldLabel>
           {loadingFeeRate && (
-            <p className="claims-field-hint">Loading fee rate…</p>
+            <p className="claims-field-hint">Loading on-chain fee rate…</p>
           )}
           {!loadingFeeRate && feePerClaim !== null && (
             <p className="claims-field-hint">
               On-chain rate: {formatStxFromMicro(feePerClaim)} STX per claim.
+              Enter a claim count to fill escrow, or type escrow to see how many
+              claims it buys.
+            </p>
+          )}
+          {!loadingFeeRate && !config.claimsContract && (
+            <p className="claims-field-hint">
+              Set the registry contract to fetch the on-chain fee rate and use
+              the claim-count helper.
             </p>
           )}
           {!loadingFeeRate &&
-            feePerClaim === null &&
-            !config.claimsContract && (
+            config.claimsContract &&
+            feePerClaim === null && (
               <p className="claims-field-hint">
-                Set the registry contract to fetch the on-chain fee rate.
+                Could not load the on-chain fee rate
+                {feeRateError ? `: ${feeRateError}` : "."} You can still enter
+                escrow manually as a whole multiple of the per-claim fee.{" "}
+                <button
+                  type="button"
+                  className="claims-link"
+                  onClick={() => void refreshFeeRate()}
+                >
+                  Retry
+                </button>
               </p>
             )}
 
