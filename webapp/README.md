@@ -20,7 +20,10 @@ Open [http://localhost:3001](http://localhost:3001). `/claims` serves the same i
 | Variable | Description |
 |---|---|
 | `NEXT_PUBLIC_NETWORK` | Stacks network: `mainnet`, `testnet`, or `devnet`. The Bitcoin network is derived automatically (`mainnet` or `regtest`). |
-| `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT` | Qualified contract id of the reward-claim registry (e.g. `ST1234….reward-claim-registry`). |
+| `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_DEVNET` | Devnet reward-claim registry (e.g. `ST1234….reward-claim-registry`). |
+| `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET` | Testnet reward-claim registry. |
+| `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET` | Mainnet reward-claim registry. |
+| `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT` | Legacy single-contract fallback; used only for `NEXT_PUBLIC_NETWORK` when the matching per-network var is unset. |
 | `NEXT_PUBLIC_STACKS_API_URL` | Optional Stacks API base URL. Defaults to the public Stacks API for mainnet/testnet, or `http://localhost:3999` for devnet. |
 | `NEXT_PUBLIC_BASE_PATH` | Optional path prefix for static hosting (e.g. `/spox` on GitHub Pages). |
 
@@ -66,7 +69,10 @@ For a project GitHub Pages site, set `NEXT_PUBLIC_BASE_PATH` to the repo name (e
 Configure optional repository variables:
 
 - `WEBAPP_NETWORK`
-- `WEBAPP_CLAIMS_REGISTRY_CONTRACT`
+- `WEBAPP_CLAIMS_REGISTRY_CONTRACT_MAINNET`
+- `WEBAPP_CLAIMS_REGISTRY_CONTRACT_TESTNET`
+- `WEBAPP_CLAIMS_REGISTRY_CONTRACT_DEVNET`
+- `WEBAPP_CLAIMS_REGISTRY_CONTRACT` (legacy fallback for the build network)
 - `WEBAPP_STACKS_API_URL`
 
 Enable GitHub Pages with **Source: GitHub Actions**.

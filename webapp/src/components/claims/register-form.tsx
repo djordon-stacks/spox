@@ -24,6 +24,7 @@ import {
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
+  principalMatchesNetwork,
   stacksExplorerTxUrlForConfig,
 } from "@/lib/claims-config";
 
@@ -113,6 +114,11 @@ export function RegisterForm() {
   const connectedIsStaker =
     Boolean(stxAddress) &&
     stxAddress?.toUpperCase() === staker.trim().toUpperCase();
+  const stakerMatchesNetwork = principalMatchesNetwork(
+    staker,
+    config.network,
+  );
+  const stakerNetworkMismatch = stakerMatchesNetwork === false;
 
   // Prefill staker from wallet.
   useEffect(() => {
@@ -509,6 +515,23 @@ export function RegisterForm() {
             autoComplete="off"
           />
         </label>
+
+        {stakerNetworkMismatch && (
+          <p
+            className={
+              config.developerMode
+                ? "claims-note"
+                : "claims-error"
+            }
+            role="alert"
+          >
+            {config.developerMode
+              ? `This staker address looks like a ${
+                  config.network === "mainnet" ? "testnet/devnet" : "mainnet"
+                } principal (ST/SN vs SP/SM), but the app is on ${config.network}. Reads and transactions will likely fail until the address and network matches.`
+              : `Staker address does not match ${config.network}. Mainnet addresses start with SP or SM; testnet and devnet addresses start with ST or SN. Change the address, or enable developer mode to switch networks.`}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <button

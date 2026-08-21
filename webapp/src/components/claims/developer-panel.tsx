@@ -3,8 +3,8 @@
 import { useClaimsConfig } from "@/components/claims/claims-config-provider";
 import type { ClaimsNetworkName } from "@/lib/claims-config";
 import {
+  claimsContractForNetwork,
   defaultApiUrlForNetwork,
-  getDefaultClaimsConfig,
 } from "@/lib/claims-config";
 
 const NETWORKS: ClaimsNetworkName[] = ["devnet", "testnet", "mainnet"];
@@ -12,8 +12,8 @@ const NETWORKS: ClaimsNetworkName[] = ["devnet", "testnet", "mainnet"];
 export function DeveloperPanel() {
   const { config, setDeveloperMode, updateOverrides, resetOverrides } =
     useClaimsConfig();
-  const defaults = getDefaultClaimsConfig();
   const networkApiDefault = defaultApiUrlForNetwork(config.network);
+  const networkContractDefault = claimsContractForNetwork(config.network);
 
   if (!config.developerMode) {
     return (
@@ -43,8 +43,8 @@ export function DeveloperPanel() {
       </div>
       <p className="claims-hint mb-4">
         These overrides will replace the defaults while developer mode is on.
-        Changing network switches to that network&apos;s Stacks API unless you
-        set a custom URL.
+        Changing network switches to that network&apos;s Stacks API and registry
+        contract unless you set custom values.
       </p>
 
       <div className="space-y-4">
@@ -56,8 +56,9 @@ export function DeveloperPanel() {
             onChange={(e) =>
               updateOverrides({
                 network: e.target.value as ClaimsNetworkName,
-                // Drop a prior custom API so the new network default applies.
+                // Drop prior custom API / contract so network defaults apply.
                 apiUrl: "",
+                claimsContract: "",
               })
             }
           >
@@ -90,7 +91,7 @@ export function DeveloperPanel() {
             className="claims-input font-mono"
             type="text"
             placeholder={
-              defaults.claimsContract || "ST….reward-claim-registry"
+              networkContractDefault || "ST….reward-claim-registry"
             }
             value={config.overrides.claimsContract ?? ""}
             onChange={(e) =>
@@ -98,8 +99,9 @@ export function DeveloperPanel() {
             }
           />
           <span className="claims-field-hint">
-            Leave blank for the build-time contract. Set this when the network
-            you selected uses a different deployment.
+            {networkContractDefault
+              ? `Leave blank for the ${config.network} build default (${networkContractDefault}).`
+              : `No build default for ${config.network}. Set NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_${config.network.toUpperCase()} or enter a contract here.`}
           </span>
         </label>
 
@@ -113,6 +115,7 @@ export function DeveloperPanel() {
           </button>
           <p className="claims-hint self-center">
             Active: {config.network} · {config.apiUrl}
+            {config.claimsContract ? ` · ${config.claimsContract}` : ""}
           </p>
         </div>
       </div>

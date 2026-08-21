@@ -29,6 +29,63 @@ export function pox5ContractForNetwork(network: ClaimsNetworkName): string {
   return `${bootAddressForNetwork(network)}.pox-5`;
 }
 
+/**
+ * Infer whether a Stacks principal belongs on mainnet or testnet/devnet
+ * from its address version prefix (SP/SM vs ST/SN). Contract principals are
+ * checked on the address before the first `.`. Returns null when the prefix
+ * is missing or unrecognized (incomplete input).
+ */
+export function stacksAddressNetworkKind(
+  address: string,
+): "mainnet" | "testnet" | null {
+  const base = address.trim().split(".")[0]?.toUpperCase() ?? "";
+  if (base.startsWith("SP") || base.startsWith("SM")) return "mainnet";
+  if (base.startsWith("ST") || base.startsWith("SN")) return "testnet";
+  return null;
+}
+
+/**
+ * Whether a principal's version prefix matches the selected Stacks network.
+ * `null` means the address is empty or not recognizable yet.
+ */
+export function principalMatchesNetwork(
+  address: string,
+  network: ClaimsNetworkName,
+): boolean | null {
+  if (!address.trim()) return null;
+  const kind = stacksAddressNetworkKind(address);
+  if (kind === null) return null;
+  if (network === "mainnet") return kind === "mainnet";
+  return kind === "testnet";
+}
+
+/**
+ * Build-time registry contract for a network.
+ *
+ * Prefers `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_{MAINNET|TESTNET|DEVNET}`.
+ * Falls back to legacy `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT` only for the
+ * build-time `NEXT_PUBLIC_NETWORK`, so switching networks in developer mode
+ * does not reuse the wrong deployment.
+ */
+export function claimsContractForNetwork(
+  network: ClaimsNetworkName,
+): string {
+  const perNetwork =
+    {
+      mainnet: process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET,
+      testnet: process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET,
+      devnet: process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_DEVNET,
+    }[network]?.trim() ?? "";
+  if (perNetwork) return perNetwork;
+
+  const legacy =
+    process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT?.trim() ?? "";
+  if (legacy && network === parseNetwork(process.env.NEXT_PUBLIC_NETWORK)) {
+    return legacy;
+  }
+  return "";
+}
+
 const STORAGE_DEV_MODE = "spox_claims_dev_mode";
 const STORAGE_OVERRIDES = "spox_claims_overrides";
 
@@ -63,8 +120,7 @@ export function getDefaultClaimsConfig(): Omit<
   const network = parseNetwork(process.env.NEXT_PUBLIC_NETWORK);
   const envApi = process.env.NEXT_PUBLIC_STACKS_API_URL?.trim();
   const apiUrl = envApi || defaultApiUrlForNetwork(network);
-  const claimsContract =
-    process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT?.trim() ?? "";
+  const claimsContract = claimsContractForNetwork(network);
 
   return {
     network,
@@ -149,7 +205,7 @@ export function resolveClaimsConfig(
   const claimsContract =
     usingOverrides && overrides.claimsContract
       ? overrides.claimsContract
-      : defaults.claimsContract;
+      : claimsContractForNetwork(network);
 
   return {
     network,
