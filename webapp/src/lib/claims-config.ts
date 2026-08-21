@@ -10,6 +10,13 @@ export type ClaimsNetworkName = "mainnet" | "testnet" | "devnet";
 
 const VALID_NETWORKS: ClaimsNetworkName[] = ["mainnet", "testnet", "devnet"];
 
+/** Well-known Stacks API base URL for each network. */
+export function defaultApiUrlForNetwork(
+  network: ClaimsNetworkName,
+): string {
+  return defaultUrlFromNetwork(network as StacksNetworkName);
+}
+
 const STORAGE_DEV_MODE = "spox_claims_dev_mode";
 const STORAGE_OVERRIDES = "spox_claims_overrides";
 
@@ -43,8 +50,7 @@ export function getDefaultClaimsConfig(): Omit<
 > {
   const network = parseNetwork(process.env.NEXT_PUBLIC_NETWORK);
   const envApi = process.env.NEXT_PUBLIC_STACKS_API_URL?.trim();
-  const apiUrl =
-    envApi || defaultUrlFromNetwork(network as StacksNetworkName);
+  const apiUrl = envApi || defaultApiUrlForNetwork(network);
   const claimsContract =
     process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT?.trim() ?? "";
 
@@ -120,8 +126,14 @@ export function resolveClaimsConfig(
   const usingOverrides = developerMode;
   const network =
     usingOverrides && overrides.network ? overrides.network : defaults.network;
+  // Prefer an explicit API override; otherwise use the selected network's
+  // known default (not the build-time network's URL).
   const apiUrl =
-    usingOverrides && overrides.apiUrl ? overrides.apiUrl : defaults.apiUrl;
+    usingOverrides && overrides.apiUrl
+      ? overrides.apiUrl
+      : usingOverrides
+        ? defaultApiUrlForNetwork(network)
+        : defaults.apiUrl;
   const claimsContract =
     usingOverrides && overrides.claimsContract
       ? overrides.claimsContract

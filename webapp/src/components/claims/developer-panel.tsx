@@ -2,7 +2,10 @@
 
 import { useClaimsConfig } from "@/components/claims/claims-config-provider";
 import type { ClaimsNetworkName } from "@/lib/claims-config";
-import { getDefaultClaimsConfig } from "@/lib/claims-config";
+import {
+  defaultApiUrlForNetwork,
+  getDefaultClaimsConfig,
+} from "@/lib/claims-config";
 
 const NETWORKS: ClaimsNetworkName[] = ["devnet", "testnet", "mainnet"];
 
@@ -10,6 +13,7 @@ export function DeveloperPanel() {
   const { config, setDeveloperMode, updateOverrides, resetOverrides } =
     useClaimsConfig();
   const defaults = getDefaultClaimsConfig();
+  const networkApiDefault = defaultApiUrlForNetwork(config.network);
 
   if (!config.developerMode) {
     return (
@@ -38,8 +42,9 @@ export function DeveloperPanel() {
         </button>
       </div>
       <p className="claims-hint mb-4">
-        These overrides will replace the defaults while developer mode is on. Useful
-        for custom testnet deployments.
+        These overrides will replace the defaults while developer mode is on.
+        Changing network switches to that network&apos;s Stacks API unless you
+        set a custom URL.
       </p>
 
       <div className="space-y-4">
@@ -51,6 +56,8 @@ export function DeveloperPanel() {
             onChange={(e) =>
               updateOverrides({
                 network: e.target.value as ClaimsNetworkName,
+                // Drop a prior custom API so the new network default applies.
+                apiUrl: "",
               })
             }
           >
@@ -67,14 +74,13 @@ export function DeveloperPanel() {
           <input
             className="claims-input font-mono"
             type="url"
-            placeholder={defaults.apiUrl}
+            placeholder={networkApiDefault}
             value={config.overrides.apiUrl ?? ""}
             onChange={(e) => updateOverrides({ apiUrl: e.target.value })}
           />
           <span className="claims-field-hint">
-            Base URL for the Stacks API (for example{" "}
-            <code>http://localhost:3999</code> on devnet). Leave blank for the
-            network default ({defaults.apiUrl}).
+            Leave blank to use the {config.network} default (
+            <code>{networkApiDefault}</code>).
           </span>
         </label>
 
@@ -84,14 +90,17 @@ export function DeveloperPanel() {
             className="claims-input font-mono"
             type="text"
             placeholder={
-              defaults.claimsContract ||
-              "ST….reward-claim-registry"
+              defaults.claimsContract || "ST….reward-claim-registry"
             }
             value={config.overrides.claimsContract ?? ""}
             onChange={(e) =>
               updateOverrides({ claimsContract: e.target.value })
             }
           />
+          <span className="claims-field-hint">
+            Leave blank for the build-time contract. Set this when the network
+            you selected uses a different deployment.
+          </span>
         </label>
 
         <div className="flex flex-wrap gap-2 pt-1">
