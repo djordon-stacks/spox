@@ -17,6 +17,18 @@ export function defaultApiUrlForNetwork(
   return defaultUrlFromNetwork(network as StacksNetworkName);
 }
 
+/** Boot address that deploys pox / pox-5 (and a safe read-only call sender). */
+export function bootAddressForNetwork(network: ClaimsNetworkName): string {
+  return network === "mainnet"
+    ? "SP000000000000000000002Q6VF78"
+    : "ST000000000000000000002AMW42H";
+}
+
+/** Qualified pox-5 boot contract for the selected network. */
+export function pox5ContractForNetwork(network: ClaimsNetworkName): string {
+  return `${bootAddressForNetwork(network)}.pox-5`;
+}
+
 const STORAGE_DEV_MODE = "spox_claims_dev_mode";
 const STORAGE_OVERRIDES = "spox_claims_overrides";
 

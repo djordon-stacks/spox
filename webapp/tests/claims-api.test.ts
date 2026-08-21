@@ -44,7 +44,7 @@ describe("read-only call errors", () => {
       (e: Error) => e,
     );
 
-    expect(error.message).toMatch(/is not deployed on the Stacks API/);
+    expect(error.message).toMatch(/registry contract has not been deployed/i);
     expect(error.message).not.toMatch(/Cannot reach/);
   });
 
@@ -147,6 +147,51 @@ describe("pox-5 position lookup", () => {
       firstRewardCycle: 124n,
       bondIndex: null,
     });
+  });
+
+  it("queries mainnet pox-5 when the config network is mainnet", async () => {
+    const signer = "SP000000000000000000002Q6VF78.signer-manager";
+    const staker = "SP000000000000000000002Q6VF78";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ okay: true, result: cvToHex(Cl.none()) }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          okay: true,
+          result: cvToHex(
+            Cl.some(
+              Cl.tuple({
+                "amount-ustx": Cl.uint(1),
+                "first-reward-cycle": Cl.uint(140),
+                "num-cycles": Cl.uint(12),
+                signer: Cl.principal(signer),
+              }),
+            ),
+          ),
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const config = resolveClaimsConfig(true, {
+      network: "mainnet",
+      apiUrl: "https://api.mainnet.hiro.so",
+      claimsContract: "",
+    });
+
+    await expect(fetchPosition(config, staker)).resolves.toEqual({
+      signer,
+      firstRewardCycle: 140n,
+      bondIndex: null,
+    });
+
+    for (const [url] of fetchMock.mock.calls) {
+      expect(String(url)).toContain(
+        "/SP000000000000000000002Q6VF78/pox-5/",
+      );
+      expect(String(url)).not.toContain("ST000000000000000000002AMW42H");
+    }
   });
 });
 
