@@ -7,10 +7,9 @@ import {
 } from "@stacks/transactions";
 import {
   splitContractId,
+  pox5ContractForNetwork,
   type ClaimsConfig,
 } from "./claims-config";
-
-const POX_5_CONTRACT = "ST000000000000000000002AMW42H.pox-5";
 
 export interface StakerPosition {
   signer: string;
@@ -121,7 +120,7 @@ function describeReadOnlyError(
   const message = error instanceof Error ? error.message : String(error);
 
   if (message.includes("NoSuchContract")) {
-    return `Contract ${contractId} is not deployed on the Stacks API at ${endpoint}.`;
+    return `The registry contract has not been deployed. `;
   }
   if (message.includes("UndefinedFunction")) {
     return `Contract ${contractId} has no read-only function "${functionName}".`;
@@ -150,10 +149,11 @@ export async function fetchPosition(
   config: ClaimsConfig,
   staker: string,
 ): Promise<StakerPosition | null> {
+  const pox5 = pox5ContractForNetwork(config.network);
   const membership = optionalTuple(
     await callReadOnly(
       config,
-      POX_5_CONTRACT,
+      pox5,
       "get-bond-membership",
       [Cl.principal(staker)],
       staker,
@@ -166,7 +166,7 @@ export async function fetchPosition(
     const firstRewardCycle = uintToBigInt(
       await callReadOnly(
         config,
-        POX_5_CONTRACT,
+        pox5,
         "bond-period-to-reward-cycle",
         [Cl.uint(bondIndex)],
         staker,
@@ -182,7 +182,7 @@ export async function fetchPosition(
   const stakerInfo = optionalTuple(
     await callReadOnly(
       config,
-      POX_5_CONTRACT,
+      pox5,
       "get-staker-info",
       [Cl.principal(staker)],
       staker,
@@ -231,7 +231,7 @@ export async function fetchRegistration(
     nextClaimBurnHeight = uintToBigInt(
       await callReadOnly(
         config,
-        POX_5_CONTRACT,
+        pox5ContractForNetwork(config.network),
         "distribution-cycle-to-burn-height",
         [Cl.uint(nextClaimDistribution)],
         staker,

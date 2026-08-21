@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  bootAddressForNetwork,
   defaultApiUrlForNetwork,
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
+  pox5ContractForNetwork,
   resolveClaimsConfig,
   stacksExplorerContractUrlForConfig,
 } from "../src/lib/claims-config";
@@ -40,6 +42,26 @@ describe("defaultApiUrlForNetwork", () => {
       "https://api.testnet.hiro.so",
     );
     expect(defaultApiUrlForNetwork("devnet")).toBe("http://localhost:3999");
+  });
+});
+
+describe("pox5ContractForNetwork", () => {
+  it("uses the mainnet boot address on mainnet", () => {
+    expect(pox5ContractForNetwork("mainnet")).toBe(
+      "SP000000000000000000002Q6VF78.pox-5",
+    );
+    expect(bootAddressForNetwork("mainnet")).toBe(
+      "SP000000000000000000002Q6VF78",
+    );
+  });
+
+  it("uses the testnet boot address on testnet and devnet", () => {
+    expect(pox5ContractForNetwork("testnet")).toBe(
+      "ST000000000000000000002AMW42H.pox-5",
+    );
+    expect(pox5ContractForNetwork("devnet")).toBe(
+      "ST000000000000000000002AMW42H.pox-5",
+    );
   });
 });
 

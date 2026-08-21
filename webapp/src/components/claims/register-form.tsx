@@ -20,13 +20,12 @@ import {
 } from "@/lib/claims-api";
 import {
   MAX_CLAIM_INSTALLMENTS,
+  bootAddressForNetwork,
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
   stacksExplorerTxUrlForConfig,
 } from "@/lib/claims-config";
-
-const BOOT_SENDER = "ST000000000000000000002AMW42H";
 
 function FieldLabel({
   children,
@@ -129,7 +128,10 @@ export function RegisterForm() {
     setLoadingFeeRate(true);
     setFeeRateError("");
     try {
-      const fee = await fetchFeePerClaim(config, BOOT_SENDER);
+      const fee = await fetchFeePerClaim(
+        config,
+        bootAddressForNetwork(config.network),
+      );
       setFeePerClaim(fee);
     } catch (e) {
       setFeePerClaim(null);
@@ -164,7 +166,10 @@ export function RegisterForm() {
       const [position, price] = await Promise.all([
         fetchPosition(config, staker.trim()),
         config.claimsContract
-          ? fetchFeePerClaim(config, BOOT_SENDER).catch(() => null)
+          ? fetchFeePerClaim(
+              config,
+              bootAddressForNetwork(config.network),
+            ).catch(() => null)
           : Promise.resolve(null),
       ]);
       if (price !== null) {
@@ -229,7 +234,10 @@ export function RegisterForm() {
     try {
       const [row, price] = await Promise.all([
         fetchRegistration(config, staker.trim(), signerManager.trim()),
-        fetchFeePerClaim(config, BOOT_SENDER).catch(() => null),
+        fetchFeePerClaim(
+          config,
+          bootAddressForNetwork(config.network),
+        ).catch(() => null),
       ]);
       if (price !== null) {
         setFeePerClaim(price);
@@ -665,8 +673,7 @@ export function RegisterForm() {
             feePerClaim === null && (
               <p className="claims-field-hint">
                 Could not load the on-chain fee rate
-                {feeRateError ? `: ${feeRateError}` : "."} You can still enter
-                escrow manually as a whole multiple of the per-claim fee.{" "}
+                {feeRateError ? `: ${feeRateError}` : "."}
                 <button
                   type="button"
                   className="claims-link"
