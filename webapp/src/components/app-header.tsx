@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ConnectButton } from "@/components/connect-button";
 import { STACKS_NETWORK } from "@/lib/constants";
 
@@ -33,6 +34,12 @@ export function AppHeader() {
           </h1>
         </div>
         <span className="network-badge">{STACKS_NETWORK}</span>
+        <Link
+          href="/claims/"
+          className="text-xs text-sand-400 hover:text-accent-orange transition-colors"
+        >
+          Claims →
+        </Link>
       </div>
       <ConnectButton />
     </div>
