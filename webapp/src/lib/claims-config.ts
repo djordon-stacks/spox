@@ -4,7 +4,6 @@ import {
   type StacksNetwork,
   type StacksNetworkName,
 } from "@stacks/network";
-import { STACKS_NETWORK } from "./constants";
 
 export type ClaimsNetworkName = "mainnet" | "testnet" | "devnet";
 
@@ -109,17 +108,19 @@ function parseNetwork(value: string | undefined): ClaimsNetworkName {
   if (value && VALID_NETWORKS.includes(value as ClaimsNetworkName)) {
     return value as ClaimsNetworkName;
   }
-  return STACKS_NETWORK as ClaimsNetworkName;
+  return "mainnet";
 }
 
-/** Build-time defaults from env (used when developer mode is off). */
+/**
+ * Public-site defaults. Developer mode off always reads mainnet, regardless of
+ * `NEXT_PUBLIC_NETWORK` or stored overrides (those apply only in developer mode).
+ */
 export function getDefaultClaimsConfig(): Omit<
   ClaimsConfig,
   "developerMode" | "overrides" | "usingOverrides"
 > {
-  const network = parseNetwork(process.env.NEXT_PUBLIC_NETWORK);
-  const envApi = process.env.NEXT_PUBLIC_STACKS_API_URL?.trim();
-  const apiUrl = envApi || defaultApiUrlForNetwork(network);
+  const network: ClaimsNetworkName = "mainnet";
+  const apiUrl = defaultApiUrlForNetwork(network);
   const claimsContract = claimsContractForNetwork(network);
 
   return {
@@ -191,21 +192,22 @@ export function resolveClaimsConfig(
   overrides: ClaimsOverrides,
 ): ClaimsConfig {
   const defaults = getDefaultClaimsConfig();
-  const usingOverrides = developerMode;
-  const network =
-    usingOverrides && overrides.network ? overrides.network : defaults.network;
-  // Prefer an explicit API override; otherwise use the selected network's
-  // known default (not the build-time network's URL).
-  const apiUrl =
-    usingOverrides && overrides.apiUrl
-      ? overrides.apiUrl
-      : usingOverrides
-        ? defaultApiUrlForNetwork(network)
-        : defaults.apiUrl;
-  const claimsContract =
-    usingOverrides && overrides.claimsContract
-      ? overrides.claimsContract
-      : claimsContractForNetwork(network);
+  if (!developerMode) {
+    return {
+      ...defaults,
+      developerMode: false,
+      overrides,
+      usingOverrides: false,
+    };
+  }
+
+  const network = overrides.network ?? defaults.network;
+  const apiUrl = overrides.apiUrl
+    ? overrides.apiUrl
+    : defaultApiUrlForNetwork(network);
+  const claimsContract = overrides.claimsContract
+    ? overrides.claimsContract
+    : claimsContractForNetwork(network);
 
   return {
     network,
@@ -215,9 +217,9 @@ export function resolveClaimsConfig(
       network: network as StacksNetworkName,
       client: { baseUrl: apiUrl },
     }),
-    developerMode,
+    developerMode: true,
     overrides,
-    usingOverrides,
+    usingOverrides: true,
   };
 }
 
