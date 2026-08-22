@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   bootAddressForNetwork,
+  claimsContractForNetwork,
   defaultApiUrlForNetwork,
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
   pox5ContractForNetwork,
+  principalMatchesNetwork,
   resolveClaimsConfig,
   stacksExplorerContractUrlForConfig,
 } from "../src/lib/claims-config";
@@ -65,6 +67,37 @@ describe("pox5ContractForNetwork", () => {
   });
 });
 
+describe("principalMatchesNetwork", () => {
+  it("treats SP/SM as mainnet and ST/SN as testnet/devnet", () => {
+    expect(
+      principalMatchesNetwork(
+        "SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7",
+        "mainnet",
+      ),
+    ).toBe(true);
+    expect(
+      principalMatchesNetwork(
+        "ST2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7",
+        "mainnet",
+      ),
+    ).toBe(false);
+    expect(
+      principalMatchesNetwork(
+        "ST2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7.signer-manager",
+        "devnet",
+      ),
+    ).toBe(true);
+    expect(
+      principalMatchesNetwork(
+        "SN3R84XZYA63QS28932XQF3G1J8R9PC3W76P9CSQS",
+        "testnet",
+      ),
+    ).toBe(true);
+    expect(principalMatchesNetwork("", "mainnet")).toBeNull();
+    expect(principalMatchesNetwork("not-an-address", "mainnet")).toBeNull();
+  });
+});
+
 describe("resolveClaimsConfig", () => {
   it("uses the selected network's API default when no API override is set", () => {
     const config = resolveClaimsConfig(true, { network: "mainnet" });
@@ -78,6 +111,62 @@ describe("resolveClaimsConfig", () => {
       apiUrl: "https://api.example.test",
     });
     expect(config.apiUrl).toBe("https://api.example.test");
+  });
+
+  it("uses the per-network registry contract for the selected network", () => {
+    const prevMain = process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET;
+    const prevTest = process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET;
+    const prevLegacy = process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT;
+    const prevNetwork = process.env.NEXT_PUBLIC_NETWORK;
+    process.env.NEXT_PUBLIC_NETWORK = "devnet";
+    process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET =
+      "SP1111111111111111111111111111111111111111.reward-claim-registry";
+    process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET =
+      "ST2222222222222222222222222222222222222222.reward-claim-registry";
+    process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT =
+      "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.reward-claim-registry";
+    try {
+      expect(claimsContractForNetwork("mainnet")).toBe(
+        "SP1111111111111111111111111111111111111111.reward-claim-registry",
+      );
+      expect(claimsContractForNetwork("testnet")).toBe(
+        "ST2222222222222222222222222222222222222222.reward-claim-registry",
+      );
+      // Legacy only applies to the build network (devnet here).
+      expect(claimsContractForNetwork("devnet")).toBe(
+        "ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039.reward-claim-registry",
+      );
+
+      const mainnet = resolveClaimsConfig(true, { network: "mainnet" });
+      expect(mainnet.claimsContract).toBe(
+        "SP1111111111111111111111111111111111111111.reward-claim-registry",
+      );
+      const testnet = resolveClaimsConfig(true, { network: "testnet" });
+      expect(testnet.claimsContract).toBe(
+        "ST2222222222222222222222222222222222222222.reward-claim-registry",
+      );
+    } finally {
+      if (prevMain === undefined) {
+        delete process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET;
+      } else {
+        process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET = prevMain;
+      }
+      if (prevTest === undefined) {
+        delete process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET;
+      } else {
+        process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET = prevTest;
+      }
+      if (prevLegacy === undefined) {
+        delete process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT;
+      } else {
+        process.env.NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT = prevLegacy;
+      }
+      if (prevNetwork === undefined) {
+        delete process.env.NEXT_PUBLIC_NETWORK;
+      } else {
+        process.env.NEXT_PUBLIC_NETWORK = prevNetwork;
+      }
+    }
   });
 });
 

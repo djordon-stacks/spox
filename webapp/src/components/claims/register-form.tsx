@@ -24,6 +24,7 @@ import {
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
+  principalMatchesNetwork,
   stacksExplorerTxUrlForConfig,
 } from "@/lib/claims-config";
 
@@ -88,7 +89,9 @@ export function RegisterForm() {
   const [staker, setStaker] = useState("");
   const [signerManager, setSignerManager] = useState("");
   const [startCycle, setStartCycle] = useState("");
-  const [oneClaimPerCycle, setOneClaimPerCycle] = useState(true);
+  const [oneClaimPerCycle, setOneClaimPerCycle] = useState<boolean | null>(
+    null,
+  );
   const [feeStx, setFeeStx] = useState("");
   const [claimCount, setClaimCount] = useState("");
   const claimCountRef = useRef(claimCount);
@@ -113,6 +116,11 @@ export function RegisterForm() {
   const connectedIsStaker =
     Boolean(stxAddress) &&
     stxAddress?.toUpperCase() === staker.trim().toUpperCase();
+  const stakerMatchesNetwork = principalMatchesNetwork(
+    staker,
+    config.network,
+  );
+  const stakerNetworkMismatch = stakerMatchesNetwork === false;
 
   // Prefill staker from wallet.
   useEffect(() => {
@@ -191,16 +199,16 @@ export function RegisterForm() {
         return;
       }
 
-      // Bonded positions can claim twice per cycle; STX-only stakes claim once.
+      // Bonded positions can claim twice per cycle; STX-only stakes often claim
+      // once. Do not preselect — cadence is an explicit registration choice.
       const twicePerCycle = position.bondIndex !== null;
-      setOneClaimPerCycle(!twicePerCycle);
       setSignerManager(position.signer);
       setStartCycle(position.firstRewardCycle.toString());
       setPositionFound(true);
       setPositionNote(
         twicePerCycle
-          ? `Position found (bond index ${position.bondIndex}). Signer-manager, start cycle, and twice-per-cycle cadence filled directly from pox-5.${feeNote}`
-          : `STX-only stake found. Signer-manager, start cycle, and once-per-cycle cadence filled directly from pox-5.${feeNote}`,
+          ? `Position found (bond index ${position.bondIndex}). Signer-manager and start cycle filled from pox-5. Bonded positions can claim twice per cycle — choose a cadence below.${feeNote}`
+          : `STX-only stake found. Signer-manager and start cycle filled from pox-5. STX-only stakes often claim once per cycle — choose a cadence below.${feeNote}`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -365,6 +373,10 @@ export function RegisterForm() {
       setError("Staker, signer-manager, and start reward cycle are required.");
       return;
     }
+    if (oneClaimPerCycle === null) {
+      setError("Choose a claim cadence.");
+      return;
+    }
     if (feeMicro === null || feeMicro <= 0n) {
       setError("Enter a valid fee in STX (up to 6 decimal places).");
       return;
@@ -503,12 +515,30 @@ export function RegisterForm() {
               setStaker(e.target.value);
               setPositionNote("");
               setPositionFound(false);
+              setOneClaimPerCycle(null);
               clearRegistration();
             }}
             placeholder="ST… / SP…"
             autoComplete="off"
           />
         </label>
+
+        {stakerNetworkMismatch && (
+          <p
+            className={
+              config.developerMode
+                ? "claims-note"
+                : "claims-error"
+            }
+            role="alert"
+          >
+            {config.developerMode
+              ? `This staker address looks like a ${
+                  config.network === "mainnet" ? "testnet/devnet" : "mainnet"
+                } principal (ST/SN vs SP/SM), but the app is on ${config.network}. Reads and transactions will likely fail until the address and network matches.`
+              : `Staker address does not match ${config.network}. Mainnet addresses start with SP or SM; testnet and devnet addresses start with ST or SN. Change the address, or enable developer mode to switch networks.`}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -543,7 +573,7 @@ export function RegisterForm() {
         )}
 
         <label className="claims-field">
-          <FieldLabel help="The principal managing the signer for this staking position. It must match pox-5; loading staking details fills it from the chain. Load registration uses this together with the staker.">
+          <FieldLabel help="The signer-manager smart contract associated with the staker. When registering, it must match the signer-manager stored in the pox-5 smart contract; loading staking details fills it from the chain.">
             Signer manager
           </FieldLabel>
           <input
@@ -572,29 +602,29 @@ export function RegisterForm() {
             </SummaryItem>
             <SummaryItem
               label="Remaining escrow"
-              help="STX still held by the registry for unconsumed claims. This is the amount refunded to the staker if they cancel."
+              help="STX still held by the registry for unconsumed claims. This is the amount refunded to the staker when they cancel their registration."
             >
               {formatStxFromMicro(registration.prepaidUstx)} STX
             </SummaryItem>
             <SummaryItem
               label="Cadence"
-              help="How often this registration is claimed in each pox-5 reward cycle."
+              help="How often this registration is claimed in during each reward cycle."
             >
               {registration.oneClaimPerCycle
                 ? "Once per reward cycle"
                 : "Twice per reward cycle"}
             </SummaryItem>
             <SummaryItem
-              label="Next distribution height"
-              help="The Bitcoin block height where spox will attempt to claim pox-5 rewards for this registration."
+              label="Next claim"
+              help="Estimated Bitcoin burn height for the next claim attempt."
             >
               {registration.nextClaimBurnHeight !== null
                 ? `~${registration.nextClaimBurnHeight.toString()}`
-                : `distribution ${registration.nextClaimDistribution.toString()}`}
+                : `distribution ${(registration.nextClaimDistribution + 1n).toString()}`}
             </SummaryItem>
             <SummaryItem
               label="Bond index"
-              help="pox-5 bond membership for this position. None means an STX-only stake."
+              help="The bond membership for this stake. None means an STX-only stake."
             >
               {registration.bondIndex === null
                 ? "None (STX-only)"
@@ -619,20 +649,20 @@ export function RegisterForm() {
             </label>
 
             <div className="claims-field">
-              <FieldLabel help="Defaults from the staker's pox-5 position: bonded positions (some bond index) use twice per cycle; STX-only stakes (no bond index) use once. You can override either way.">
+              <FieldLabel help="How often this registration is claimed in each reward cycle.">
                 Claim cadence
               </FieldLabel>
               <div className="claims-cadence">
                 <button
                   type="button"
-                  className={`claims-pill ${oneClaimPerCycle ? "claims-pill-active" : ""}`}
+                  className={`claims-pill ${oneClaimPerCycle === true ? "claims-pill-active" : ""}`}
                   onClick={() => setOneClaimPerCycle(true)}
                 >
                   Once per cycle
                 </button>
                 <button
                   type="button"
-                  className={`claims-pill ${!oneClaimPerCycle ? "claims-pill-active" : ""}`}
+                  className={`claims-pill ${oneClaimPerCycle === false ? "claims-pill-active" : ""}`}
                   onClick={() => setOneClaimPerCycle(false)}
                 >
                   Twice per cycle

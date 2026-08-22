@@ -46,7 +46,11 @@ jobs:
         env:
           # Project Pages site under /spox — change if the repo name differs.
           NEXT_PUBLIC_BASE_PATH: /spox
-          NEXT_PUBLIC_NETWORK: ${{ vars.WEBAPP_NETWORK || 'testnet' }}
+          NEXT_PUBLIC_NETWORK: ${{ vars.WEBAPP_NETWORK || 'mainnet' }}
+          NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET: ${{ vars.WEBAPP_CLAIMS_REGISTRY_CONTRACT_MAINNET }}
+          NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET: ${{ vars.WEBAPP_CLAIMS_REGISTRY_CONTRACT_TESTNET }}
+          NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_DEVNET: ${{ vars.WEBAPP_CLAIMS_REGISTRY_CONTRACT_DEVNET }}
+          # Legacy single-contract fallback for the build network only.
           NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT: ${{ vars.WEBAPP_CLAIMS_REGISTRY_CONTRACT }}
           NEXT_PUBLIC_STACKS_API_URL: ${{ vars.WEBAPP_STACKS_API_URL }}
         run: pnpm build
