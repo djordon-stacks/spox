@@ -255,5 +255,9 @@ describe("registry registration lookup", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
       "/ST000000000000000000002AMW42H/pox-5/distribution-cycle-to-burn-height",
     );
+    const heightBody = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body ?? "{}"),
+    ) as { arguments?: string[] };
+    expect(heightBody.arguments?.[0]).toBe(cvToHex(Cl.uint(241)));
   });
 });

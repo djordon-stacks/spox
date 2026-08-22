@@ -226,6 +226,10 @@ export async function fetchRegistration(
   const nextClaimDistribution = uintToBigInt(
     tuple.value["next-claim-distribution"],
   );
+  // Claims are pending only when next-claim-distribution is strictly less than
+  // pox-5's current-distribution-cycle, so the first eligible burn height is
+  // the start of the following distribution.
+  const eligibleDistribution = nextClaimDistribution + 1n;
   let nextClaimBurnHeight: bigint | null = null;
   try {
     nextClaimBurnHeight = uintToBigInt(
@@ -233,7 +237,7 @@ export async function fetchRegistration(
         config,
         pox5ContractForNetwork(config.network),
         "distribution-cycle-to-burn-height",
-        [Cl.uint(nextClaimDistribution)],
+        [Cl.uint(eligibleDistribution)],
         staker,
       ),
     );

@@ -35,9 +35,13 @@ Open [http://localhost:3001](http://localhost:3001). `/claims` serves the same i
 2. **Load staking details** — reads the live pox-5 position and fills signer-manager, start cycle, and claim cadence (once per cycle for STX-only stakes, twice when a bond index is present). If the registry is deployed, also fetches `get-fee-per-claim`; otherwise enter the fee manually.
 3. **Load registration** — separate button; requires staker + signer-manager. Calls `get-registration` on the registry. Clears any staking-details note. If no row exists, the UI explains that registration requires a live pox-5 stake under that signer-manager.
 4. **Register** — connect the staker wallet and submit `register-for-claims` with prepaid STX for the chosen number of cycles.
-5. **Manage an existing registration** — summary shows remaining claims, remaining escrow, cadence, next distribution height, and bond index. **Add claims** prepays more cycles; **Cancel registration** refunds remaining escrow (staker signature required).
+5. **Manage an existing registration** — summary shows remaining claims, remaining escrow, cadence, next claim (≈ Bitcoin height), and bond index. **Add claims** prepays more cycles; **Cancel registration** refunds remaining escrow (staker signature required).
 
-Read-only calls (position, fee, registration) do not require a wallet. Writes require the staker to sign; cancel is staker-only.
+The header shows the Bitcoin burn tip from Stacks `/v2/info` (refreshed every 5 minutes on mainnet, every 3 minutes on testnet/devnet) so you can compare it to the next-claim height.
+
+### Activity page
+
+`/activity` lists recent registry `print` events from the Stacks API (`/extended/v1/contract/.../events`), with a client-side principal filter and explorer links for each transaction.
 
 ### Developer mode
 
