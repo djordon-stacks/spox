@@ -99,6 +99,16 @@ describe("principalMatchesNetwork", () => {
 });
 
 describe("resolveClaimsConfig", () => {
+  it("reads mainnet when developer mode is off, ignoring stored network overrides", () => {
+    const config = resolveClaimsConfig(false, {
+      network: "testnet",
+      apiUrl: "https://api.testnet.hiro.so",
+    });
+    expect(config.network).toBe("mainnet");
+    expect(config.apiUrl).toBe("https://api.mainnet.hiro.so");
+    expect(config.usingOverrides).toBe(false);
+  });
+
   it("uses the selected network's API default when no API override is set", () => {
     const config = resolveClaimsConfig(true, { network: "mainnet" });
     expect(config.network).toBe("mainnet");

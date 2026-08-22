@@ -19,7 +19,7 @@ Open [http://localhost:3001](http://localhost:3001). `/claims` serves the same i
 
 | Variable | Description |
 |---|---|
-| `NEXT_PUBLIC_NETWORK` | Stacks network: `mainnet`, `testnet`, or `devnet`. The Bitcoin network is derived automatically (`mainnet` or `regtest`). |
+| `NEXT_PUBLIC_NETWORK` | Unused for public reads. Developer mode off is always mainnet. Testnet and devnet are selected in Developer settings. |
 | `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_DEVNET` | Devnet reward-claim registry (e.g. `ST1234….reward-claim-registry`). |
 | `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_TESTNET` | Testnet reward-claim registry. |
 | `NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_MAINNET` | Mainnet reward-claim registry. |
