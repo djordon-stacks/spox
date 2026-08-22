@@ -31,19 +31,8 @@ function EventCard({
   event: RegistryContractEvent;
   explorerUrl: string;
 }) {
-  const highlightKeys = [
-    "staker",
-    "signer-manager",
-    "reward-cycle",
-    "claim-distribution",
-    "earned",
-    "claim-error",
-    "withdrawal-request",
-    "num-claims",
-    "escrowed",
-  ];
-  const rows = highlightKeys
-    .filter((key) => key in event.payload && key !== "topic")
+  const rows = Object.keys(event.payload)
+    .filter((key) => key !== "topic")
     .map((key) => ({
       key,
       value: formatPayloadValue(event.payload[key]),
