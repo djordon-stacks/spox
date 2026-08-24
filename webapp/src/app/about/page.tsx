@@ -6,7 +6,7 @@ export default function AboutPage() {
   return (
     <ClaimsShell
       active="about"
-      lede="If you stack STX under pox-5, rewards no longer arrive on their own — spox submits the claim transactions for you."
+      lede="If you stake STX under pox-5, rewards no longer arrive on their own — spox submits the claim transactions for you."
     >
       <article className="claims-card claims-about">
         <section>
