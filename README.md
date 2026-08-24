@@ -15,7 +15,7 @@ to monitor the Bitcoin network for matching transactions and automatically notif
 
 ## Reward claims web app
 
-[`webapp/`](webapp/) is a static Next.js site for registering a [pox-5](https://docs.stacks.co/pox-5/development/rewards) stake with the reward-claim registry: load staking details from chain, register prepaid claims, add more claims, or cancel and reclaim escrow. See [webapp/README.md](webapp/README.md) for environment variables, local devnet setup, and GitHub Pages deployment.
+[`webapp/`](webapp/) is a static Next.js site for registering a [pox-5](https://docs.stacks.co/pox-5/development/rewards) stake with the reward-claim registry: load staking details from chain, register prepaid claims, add more claims, or cancel and reclaim escrow. See [webapp/README.md](webapp/README.md) for environment variables, local setup, and GitHub Pages deployment.
 
 ```bash
 (cd webapp && pnpm install && pnpm dev)
