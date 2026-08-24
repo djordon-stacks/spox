@@ -1,6 +1,6 @@
 # About spox
 
-If you stack STX under pox-5, rewards no longer arrive on their own — **spox** submits the claim transactions for you.
+If you stake STX under pox-5, rewards no longer arrive on their own — **spox** submits the claim transactions for you.
 
 Before the pox-5 hard fork, PoX rewards appeared automatically as BTC in a staker's Bitcoin address. Not anymore. pox-5 pays rewards as **sBTC** held in the pox-5 smart contract, and moving that sBTC to you — as sBTC on Stacks or as BTC on Bitcoin — requires a specific sequence of contract calls.
 
