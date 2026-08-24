@@ -3,11 +3,15 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ClaimsConnectButton } from "@/components/claims/claims-connect-button";
+import {
+  ClaimsPageMenu,
+  type ClaimsNavPage,
+} from "@/components/claims/claims-page-menu";
 import { useClaimsConfig } from "@/components/claims/claims-config-provider";
 import { useBurnChainTip } from "@/hooks/use-burn-chain-tip";
 import { stacksExplorerContractUrlForConfig } from "@/lib/claims-config";
 
-export type ClaimsNavPage = "register" | "activity";
+export type { ClaimsNavPage } from "@/components/claims/claims-page-menu";
 
 export function ClaimsShell({
   active,
@@ -31,46 +35,24 @@ export function ClaimsShell({
       <div className="claims-atmosphere" aria-hidden />
 
       <header className="claims-nav">
-        <nav className="claims-nav-links" aria-label="Claims">
-          <Link
-            href="/"
-            className={
-              active === "register" ? "claims-nav-current" : "claims-nav-muted"
-            }
-          >
-            Register
-          </Link>
-          <span className="claims-nav-sep" aria-hidden="true">
-            ·
-          </span>
-          <Link
-            href="/activity/"
-            className={
-              active === "activity" ? "claims-nav-current" : "claims-nav-muted"
-            }
-          >
-            Activity
-          </Link>
-        </nav>
-        <div className="flex items-center gap-3">
-          {ready && (
-            <span className="claims-network-badge">{config.network}</span>
-          )}
+        <ClaimsPageMenu active={active} />
+        <div className="claims-nav-meta">
           <span
-            className="claims-tip-badge"
+            className="claims-status-badge"
             title={
               tipError
                 ? tipError
                 : tipLoading && burnBlockHeight === null
                   ? "Loading Bitcoin tip…"
-                  : "Bitcoin burn block height from Stacks /v2/info"
+                  : "Network and Bitcoin burn height from Stacks /v2/info"
             }
           >
+            {ready ? `${config.network} · ` : null}
             {burnBlockHeight !== null
-              ? `BTC tip ${burnBlockHeight.toLocaleString()}`
+              ? burnBlockHeight.toLocaleString()
               : tipLoading
-                ? "BTC tip…"
-                : "BTC tip —"}
+                ? "…"
+                : "—"}
           </span>
           <ClaimsConnectButton />
         </div>
@@ -78,7 +60,11 @@ export function ClaimsShell({
 
       <section className="claims-hero">
         <h1 className="sr-only">
-          {active === "register" ? "Reward claims" : "Registry activity"}
+          {active === "register"
+            ? "Reward claims"
+            : active === "activity"
+              ? "Registry activity"
+              : "About spox"}
         </h1>
         <p className="claims-brand" aria-hidden="true">
           spox
@@ -104,6 +90,10 @@ export function ClaimsShell({
           </p>
         )}
         <p>
+          <Link href="/about/" className="claims-footer-link">
+            About
+          </Link>
+          {" · "}
           Built with 🧡 at Stacks Labs{" "}
           <span className="claims-footer-sep" aria-hidden="true">
             ·

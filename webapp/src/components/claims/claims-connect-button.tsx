@@ -9,35 +9,39 @@ export function ClaimsConnectButton() {
 
   if (connected && stxAddress) {
     const onCopy = () => {
-      navigator.clipboard.writeText(stxAddress);
+      void navigator.clipboard.writeText(stxAddress);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      window.setTimeout(() => setCopied(false), 2000);
     };
 
     return (
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onCopy}
-          className="claims-addr"
-          title={stxAddress}
-        >
+      <details className="claims-menu claims-menu-end">
+        <summary className="claims-menu-summary claims-addr" title={stxAddress}>
           <span className="claims-addr-dot" />
           <span className="font-mono text-xs">
             {stxAddress.slice(0, 6)}…{stxAddress.slice(-4)}
           </span>
-          <span className="sr-only">{copied ? "Copied" : "Copy address"}</span>
-        </button>
-        <button type="button" onClick={disconnect} className="claims-btn-ghost">
-          Disconnect
-        </button>
-      </div>
+          <span className="claims-menu-chevron" aria-hidden="true" />
+        </summary>
+        <div className="claims-menu-panel">
+          <button type="button" className="claims-menu-item" onClick={onCopy}>
+            {copied ? "Copied" : "Copy address"}
+          </button>
+          <button
+            type="button"
+            className="claims-menu-item"
+            onClick={disconnect}
+          >
+            Disconnect
+          </button>
+        </div>
+      </details>
     );
   }
 
   return (
     <button type="button" onClick={connect} className="claims-btn-secondary">
-      Connect wallet
+      Connect
     </button>
   );
 }

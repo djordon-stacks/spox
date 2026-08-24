@@ -1,6 +1,6 @@
 # spox Reward Claims — Web App
 
-A static Next.js app for registering a [pox-5](https://docs.stacks.co/pox-5/development/rewards) staking position with the spox reward-claim registry. The root page reads position and registration state from the Stacks API and signs `register-for-claims`, `add-claims`, and `cancel-registration` with a connected wallet.
+A static Next.js app for registering a [pox-5](https://docs.stacks.co/pox-5/development/rewards) staking position with the spox reward-claim registry. The root page reads position and registration state from the Stacks API and signs `register-for-claims`, `add-claims`, and `cancel-registration` with a connected wallet. [`/about`](/about/) explains why automated claims exist.
 
 The original sBTC deposit-address UI remains under `src/legacy` (with Bitcoin script helpers and tests), but it is not exposed by an App Router route or included in the deployed site.
 
@@ -38,6 +38,10 @@ Open [http://localhost:3001](http://localhost:3001). `/claims` serves the same i
 5. **Manage an existing registration** — summary shows remaining claims, remaining escrow, cadence, next claim (≈ Bitcoin height), and bond index. **Add claims** prepays more cycles; **Cancel registration** refunds remaining escrow (staker signature required).
 
 The header shows the Bitcoin burn tip from Stacks `/v2/info` (refreshed every 5 minutes on mainnet, every 3 minutes on testnet/devnet) so you can compare it to the next-claim height.
+
+### About page
+
+`/about` explains why automated pox-5 claims exist and what this site does.
 
 ### Activity page
 

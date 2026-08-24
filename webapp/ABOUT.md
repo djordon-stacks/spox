@@ -1,0 +1,56 @@
+# About spox
+
+If you stack STX under pox-5, rewards no longer arrive on their own — **spox** submits the claim transactions for you.
+
+Before the pox-5 hard fork, PoX rewards appeared automatically as BTC in a staker's Bitcoin address. Not anymore. pox-5 pays rewards as **sBTC** held in the pox-5 smart contract, and moving that sBTC to you — as sBTC on Stacks or as BTC on Bitcoin — requires a specific sequence of contract calls.
+
+**spox** runs that schedule so you don't have to. It has two pieces:
+
+- an on-chain **reward-claim-registry** contract, where stakers opt in and prepay STX for a fixed number of **prepaid claim attempts**, and
+- an off-chain application that reads pending work from the registry and submits the claim transactions when rewards are ready.
+
+Anyone can run spox — the design is permissionless — and the registry never custodies sBTC or your staked STX.
+
+## Your signer-manager
+
+Your **signer-manager** is the smart contract tied to your pox-5 stake. The pox-5 smart contract sends your rewards to the signer-manager, and it is designed to pay these rewards to the Stacks or Bitcoin address you configured.
+
+## What this site does
+
+This is a web UI for the reward-claim-registry contract. From here you can:
+
+- **Look up a staker** and see the signer-manager running their pox-5 position, plus any existing registration.
+- **Register**, choose whether to claim once or twice per reward cycle, and prepay STX that buys a fixed number of prepaid claim attempts.
+- **Top up** an active registration with more attempts, or **cancel** and refund any unused prepaid STX.
+- **Browse events** the contract has emitted — registrations, claims, withdrawals, cancellations.
+
+Registration requires an active pox-5 stake under the signer-manager you specify. You choose the cadence and the starting reward cycle during registration. A single call can buy up to 192 attempts.
+
+## How automated claims run
+
+Once you are registered, the spox application does the work:
+
+1. Each new Bitcoin block, it checks the registry for stakers who are due a claim.
+2. When you're due, it submits a transaction that claims your rewards via your signer-manager to your configured payout address.
+3. If that payout address is on Bitcoin, the withdrawal is tracked separately and settled on-chain once the sBTC signers accept or reject it.
+
+Each **reward cycle** has two **distribution periods**; the registry tracks which half you're on. A claim can be submitted only after a distribution period ends and pox-5 has finished calculating rewards for that period. Each attempt uses one prepaid claim attempt.
+
+### On-chain details
+
+- Pending work is processed via `reward-claim-registry::process-reward-claims`. That call pulls the staker's pox-5 rewards into the signer-manager when needed, then claims the staker's share.
+- Claims wait until `pox-5::calculate-rewards` has covered the target distribution.
+
+## Fees
+
+Each prepaid claim attempt escrows 0.01 STX into the registry. That STX is **burned** when the attempt runs; cancellation refunds whatever is left. spox takes no cut — the fee exists only to limit griefing.
+
+## What spox isn't
+
+spox does not stake STX for you, hold staked STX, or hold sBTC rewards. Your funds remain in pox-5 and your signer-manager throughout. The registry holds only the STX you prepaid for future claim attempts.
+
+## Further reading
+
+- pox-5 rewards
+- spox on GitHub
+- [signer-manager reference contract](https://github.com/stacks-network/stacks-core/blob/4.0.2/contrib/core-contract-tests/contracts/signer-manager.clar) (stacks-core)
