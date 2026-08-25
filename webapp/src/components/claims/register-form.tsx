@@ -157,31 +157,69 @@ export function RegisterForm() {
     if (stxAddress) setStaker((prev) => prev || stxAddress);
   }, [stxAddress]);
 
-  const refreshFeeRate = useCallback(async () => {
-    if (!config.claimsContract) {
-      setFeePerClaim(null);
+  const feeLoadRef = useRef<Promise<bigint | null> | null>(null);
+  const feePerClaimRef = useRef<bigint | null>(null);
+  const feeScopeRef = useRef<string | null>(null);
+
+  const loadFeePerClaim = useCallback(
+    async (force = false): Promise<bigint | null> => {
+      if (!config.claimsContract) {
+        feePerClaimRef.current = null;
+        feeScopeRef.current = null;
+        setFeePerClaim(null);
+        setFeeRateError("");
+        return null;
+      }
+
+      const scope = `${config.network}|${config.apiUrl}|${config.claimsContract}`;
+      if (
+        !force &&
+        feePerClaimRef.current !== null &&
+        feeScopeRef.current === scope
+      ) {
+        return feePerClaimRef.current;
+      }
+      if (!force && feeLoadRef.current) {
+        return feeLoadRef.current;
+      }
+
+      setLoadingFeeRate(true);
       setFeeRateError("");
-      return;
-    }
-    setLoadingFeeRate(true);
-    setFeeRateError("");
-    try {
-      const fee = await fetchFeePerClaim(
-        config,
-        bootAddressForNetwork(config.network),
-      );
-      setFeePerClaim(fee);
-    } catch (e) {
-      setFeePerClaim(null);
-      setFeeRateError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoadingFeeRate(false);
-    }
-  }, [config]);
+
+      const promise = (async () => {
+        try {
+          const fee = await fetchFeePerClaim(
+            config,
+            bootAddressForNetwork(config.network),
+          );
+          feePerClaimRef.current = fee;
+          feeScopeRef.current = scope;
+          setFeePerClaim(fee);
+          return fee;
+        } catch (e) {
+          feePerClaimRef.current = null;
+          feeScopeRef.current = null;
+          setFeePerClaim(null);
+          setFeeRateError(e instanceof Error ? e.message : String(e));
+          return null;
+        } finally {
+          setLoadingFeeRate(false);
+          feeLoadRef.current = null;
+        }
+      })();
+
+      feeLoadRef.current = promise;
+      return promise;
+    },
+    [config],
+  );
 
   useEffect(() => {
-    void refreshFeeRate();
-  }, [refreshFeeRate]);
+    feePerClaimRef.current = null;
+    feeScopeRef.current = null;
+    setFeePerClaim(null);
+    void loadFeePerClaim();
+  }, [loadFeePerClaim]);
 
   const clearRegistration = useCallback(() => {
     setRegistration(null);
@@ -272,21 +310,12 @@ export function RegisterForm() {
     setPositionFound(false);
     clearRegistration();
     try {
-      const [position, price] = await Promise.all([
+      const [position, fee] = await Promise.all([
         fetchPosition(config, staker.trim()),
-        config.claimsContract
-          ? fetchFeePerClaim(
-              config,
-              bootAddressForNetwork(config.network),
-            ).catch(() => null)
-          : Promise.resolve(null),
+        loadFeePerClaim(),
       ]);
-      if (price !== null) {
-        setFeePerClaim(price);
-        setFeeRateError("");
-      }
       const feeNote =
-        price === null
+        fee === null
           ? " The registry fee is unavailable until the claims contract is deployed; enter the fee when it is known."
           : "";
 
@@ -312,7 +341,7 @@ export function RegisterForm() {
     } finally {
       setLoadingDefaults(false);
     }
-  }, [checkSignerManagerTrait, clearRegistration, config, staker]);
+  }, [checkSignerManagerTrait, clearRegistration, config, loadFeePerClaim, staker]);
 
   const loadRegistration = useCallback(async () => {
     if (!staker.trim()) {
@@ -337,18 +366,11 @@ export function RegisterForm() {
     setPositionNote("");
     setPositionFound(false);
     try {
-      const [row, price] = await Promise.all([
-        fetchRegistration(config, staker.trim(), signerManager.trim()),
-        fetchFeePerClaim(
-          config,
-          bootAddressForNetwork(config.network),
-        ).catch(() => null),
-      ]);
-      if (price !== null) {
-        setFeePerClaim(price);
-        setFeeRateError("");
-      }
-
+      const row = await fetchRegistration(
+        config,
+        staker.trim(),
+        signerManager.trim(),
+      );
       if (!row) {
         setRegistration(null);
         setRegistrationNote(
@@ -852,7 +874,7 @@ export function RegisterForm() {
                 <button
                   type="button"
                   className="claims-link"
-                  onClick={() => void refreshFeeRate()}
+                  onClick={() => void loadFeePerClaim(true)}
                 >
                   Retry
                 </button>

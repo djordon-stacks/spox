@@ -19,14 +19,14 @@ export default function AboutPage() {
             a specific sequence of contract calls.
           </p>
           <p>
-            <strong>spox</strong> runs that schedule so you don't have to. It
+            spox runs that schedule so you don't have to. It
             has two pieces:
           </p>
           <ul>
             <li>
-              an on-chain <strong>reward-claim-registry</strong> contract,
-              where stakers opt in and prepay STX for a fixed number of{" "}
-              <strong>prepaid claim attempts</strong>, and
+              an on-chain registry contract,
+              where stakers can opt-in and prepay STX for a fixed number of
+              prepaid claim attempts, and
             </li>
             <li>
               an off-chain application that reads pending work from the
@@ -43,7 +43,7 @@ export default function AboutPage() {
         <section>
           <h2>Your signer-manager</h2>
           <p>
-            Your <strong>signer-manager</strong> is the smart contract tied to
+            Your signer-manager is the smart contract tied to
             your pox-5 stake. The pox-5 smart contract sends your rewards to
             the signer-manager, and it is designed to pay these rewards to the
             Stacks or Bitcoin address you configured.
@@ -104,9 +104,8 @@ export default function AboutPage() {
             </li>
           </ol>
           <p>
-            Each <strong>reward cycle</strong> has two{" "}
-            <strong>distribution periods</strong>; the registry tracks which
-            half you're on. A claim can be submitted only after a distribution
+            Each reward cycle has two
+            distribution periods; a claim can be submitted only after a distribution
             period ends and pox-5 has finished calculating rewards for that
             period. Each attempt uses one prepaid claim attempt.
           </p>
@@ -130,9 +129,10 @@ export default function AboutPage() {
           <h2>Fees</h2>
           <p>
             Each prepaid claim attempt escrows 0.01 STX into the registry.
-            That STX is <strong>burned</strong> when the attempt runs;
+            That STX is burned when the attempt runs;
             cancellation refunds whatever is left. spox takes no cut — the fee
-            exists only to limit griefing.
+            is burned so each prepaid claim has a real cost, which discourages
+            spam and abuse of the registry
           </p>
         </section>
 
