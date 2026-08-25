@@ -7,7 +7,9 @@ import {
 } from "@stacks/transactions";
 import {
   splitContractId,
+  isValidContractPrincipal,
   pox5ContractForNetwork,
+  traitImplementationUrl,
   type ClaimsConfig,
 } from "./claims-config";
 
@@ -253,4 +255,59 @@ export async function fetchRegistration(
     nextClaimBurnHeight,
     prepaidUstx: uintToBigInt(tuple.value["prepaid-ustx"]),
   };
+}
+
+/**
+ * Result of checking a signer-manager against `reward-claim-signer-manager-trait`
+ * via the node's `/v2/traits/` RPC. `null` means the principal was not fully formed
+ * and no request was made.
+ */
+export type SignerManagerTraitCheck =
+  | "supported"
+  | "not-implemented"
+  | "not-found";
+
+/**
+ * Check whether a signer-manager contract implements `reward-claim-signer-manager-trait`
+ * as defined in the configured registry.
+ */
+export async function fetchSignerManagerTraitCheck(
+  config: ClaimsConfig,
+  signerManager: string,
+): Promise<SignerManagerTraitCheck | null> {
+  if (!config.claimsContract) {
+    throw new Error("Claims registry contract is not configured.");
+  }
+
+  if (!isValidContractPrincipal(signerManager)) {
+    return null;
+  }
+
+  const url = traitImplementationUrl(config, signerManager);
+  if (!url) {
+    throw new Error(
+      "Signer-manager must be a contract principal (address.contract-name).",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (e) {
+    throw new Error(
+      `Cannot reach the Stacks API at ${config.apiUrl} (network: ${config.network}).`,
+      { cause: e },
+    );
+  }
+
+  if (response.status === 404) {
+    return "not-found";
+  }
+
+  if (!response.ok) {
+    throw new Error(`Trait check failed with HTTP ${response.status}.`);
+  }
+
+  const body = (await response.json()) as { is_implemented?: boolean };
+  return body.is_implemented === true ? "supported" : "not-implemented";
 }

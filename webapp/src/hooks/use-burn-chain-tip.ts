@@ -29,13 +29,15 @@ export function useBurnChainTip() {
 
   useEffect(() => {
     if (!ready) return;
+    setBurnBlockHeight(null);
+    setError("");
     void refresh();
     const id = window.setInterval(
       () => void refresh(),
       burnTipPollIntervalMs(config.network),
     );
     return () => window.clearInterval(id);
-  }, [ready, refresh, config.network]);
+  }, [ready, refresh, config.network, config.apiUrl]);
 
   return { burnBlockHeight, error, loading, refresh };
 }

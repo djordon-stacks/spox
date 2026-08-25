@@ -16,6 +16,8 @@ import {
   fetchFeePerClaim,
   fetchPosition,
   fetchRegistration,
+  fetchSignerManagerTraitCheck,
+  type SignerManagerTraitCheck,
   type StakerRegistration,
 } from "@/lib/claims-api";
 import {
@@ -23,9 +25,11 @@ import {
   bootAddressForNetwork,
   feeMicroForClaimCount,
   formatStxFromMicro,
+  isValidContractPrincipal,
   parseStxToMicro,
   principalMatchesNetwork,
   stacksExplorerTxUrlForConfig,
+  type ClaimsConfig,
 } from "@/lib/claims-config";
 
 function FieldLabel({
@@ -82,6 +86,26 @@ function SummaryItem({
   );
 }
 
+function traitCheckMessage(check: SignerManagerTraitCheck): string {
+  if (check === "not-found") {
+    return "No contract found at this address on the selected network.";
+  }
+  return "This contract does not implement the reward-claim-signer-manager-trait. Registration will fail.";
+}
+
+function traitCheckBlocksRegistration(
+  check: SignerManagerTraitCheck | null,
+): check is "not-found" | "not-implemented" {
+  return check === "not-found" || check === "not-implemented";
+}
+
+function traitCheckScopeKey(
+  config: Pick<ClaimsConfig, "network" | "claimsContract">,
+  signerManager: string,
+): string {
+  return `${config.network}|${config.claimsContract}|${signerManager.trim()}`;
+}
+
 export function RegisterForm() {
   const { connected, stxAddress, connect } = useWallet();
   const { config } = useClaimsConfig();
@@ -101,6 +125,12 @@ export function RegisterForm() {
   const [feeRateError, setFeeRateError] = useState("");
   const [positionNote, setPositionNote] = useState("");
   const [positionFound, setPositionFound] = useState(false);
+  const [traitCheck, setTraitCheck] = useState<SignerManagerTraitCheck | null>(
+    null,
+  );
+  const [traitCheckScope, setTraitCheckScope] = useState<string | null>(null);
+  const [traitNote, setTraitNote] = useState("");
+  const [checkingTrait, setCheckingTrait] = useState(false);
   const [registration, setRegistration] = useState<StakerRegistration | null>(
     null,
   );
@@ -159,6 +189,77 @@ export function RegisterForm() {
     setConfirmingCancel(false);
   }, []);
 
+  const clearForStakerChange = useCallback(() => {
+    setSignerManager("");
+    setStartCycle("");
+    setOneClaimPerCycle(null);
+    setFeeStx("");
+    setClaimCount("");
+    setPositionNote("");
+    setPositionFound(false);
+    setTraitCheck(null);
+    setTraitCheckScope(null);
+    setTraitNote("");
+    setCheckingTrait(false);
+    setError("");
+    setTxId(null);
+    clearRegistration();
+  }, [clearRegistration]);
+
+  useEffect(() => {
+    clearForStakerChange();
+  }, [config.network, config.apiUrl, config.claimsContract, clearForStakerChange]);
+
+  const traitCheckScopeForSigner = traitCheckScopeKey(config, signerManager);
+  const traitCheckIsCurrent = traitCheckScope === traitCheckScopeForSigner;
+  const signerManagerVerified =
+    !checkingTrait &&
+    traitCheckIsCurrent &&
+    traitCheck === "supported" &&
+    Boolean(signerManager.trim());
+
+  const checkSignerManagerTrait = useCallback(
+    async (
+      signerManagerId: string,
+    ): Promise<SignerManagerTraitCheck | null> => {
+      const trimmed = signerManagerId.trim();
+      if (!trimmed || !isValidContractPrincipal(trimmed)) {
+        setTraitCheck(null);
+        setTraitCheckScope(null);
+        setTraitNote("");
+        return null;
+      }
+      if (!config.claimsContract) {
+        setTraitCheck(null);
+        setTraitCheckScope(null);
+        setTraitNote("");
+        return null;
+      }
+
+      setCheckingTrait(true);
+      setTraitNote("");
+      try {
+        const result = await fetchSignerManagerTraitCheck(config, trimmed);
+        setTraitCheck(result);
+        setTraitCheckScope(traitCheckScopeKey(config, trimmed));
+        setTraitNote(
+          result && traitCheckBlocksRegistration(result)
+            ? traitCheckMessage(result)
+            : "",
+        );
+        return result;
+      } catch (e) {
+        setTraitCheck(null);
+        setTraitCheckScope(null);
+        setTraitNote("");
+        throw e;
+      } finally {
+        setCheckingTrait(false);
+      }
+    },
+    [config],
+  );
+
   const loadDefaults = useCallback(async () => {
     if (!staker.trim()) {
       setError("Enter a staker address first.");
@@ -199,23 +300,19 @@ export function RegisterForm() {
         return;
       }
 
-      // Bonded positions can claim twice per cycle; STX-only stakes often claim
-      // once. Do not preselect — cadence is an explicit registration choice.
-      const twicePerCycle = position.bondIndex !== null;
       setSignerManager(position.signer);
       setStartCycle(position.firstRewardCycle.toString());
       setPositionFound(true);
+      await checkSignerManagerTrait(position.signer);
       setPositionNote(
-        twicePerCycle
-          ? `Position found (bond index ${position.bondIndex}). Signer-manager and start cycle filled from pox-5. Bonded positions can claim twice per cycle — choose a cadence below.${feeNote}`
-          : `STX-only stake found. Signer-manager and start cycle filled from pox-5. STX-only stakes often claim once per cycle — choose a cadence below.${feeNote}`,
+        `Stake found. Signer-manager and start cycle filled from pox-5 smart contract.${feeNote}`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoadingDefaults(false);
     }
-  }, [clearRegistration, config, staker]);
+  }, [checkSignerManagerTrait, clearRegistration, config, staker]);
 
   const loadRegistration = useCallback(async () => {
     if (!staker.trim()) {
@@ -381,6 +478,28 @@ export function RegisterForm() {
       setError("Enter a valid fee in STX (up to 6 decimal places).");
       return;
     }
+    const needsTraitCheck =
+      !traitCheckIsCurrent || traitCheck !== "supported";
+    if (needsTraitCheck) {
+      try {
+        const result = await checkSignerManagerTrait(signerManager.trim());
+        if (result !== "supported") {
+          if (traitCheckBlocksRegistration(result)) {
+            setError(traitCheckMessage(result));
+          } else if (!isValidContractPrincipal(signerManager.trim())) {
+            setError("Enter a valid signer-manager contract principal.");
+          } else if (!config.claimsContract) {
+            setError("Claims registry contract is not configured.");
+          } else {
+            setError("Could not verify signer-manager compatibility.");
+          }
+          return;
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
     let start: bigint;
     try {
       start = BigInt(startCycle.trim());
@@ -407,8 +526,12 @@ export function RegisterForm() {
     });
   }, [
     feeMicro,
+    checkSignerManagerTrait,
+    config.claimsContract,
     oneClaimPerCycle,
     signerManager,
+    traitCheck,
+    traitCheckIsCurrent,
     startCycle,
     staker,
     stxAddress,
@@ -513,10 +636,7 @@ export function RegisterForm() {
             value={staker}
             onChange={(e) => {
               setStaker(e.target.value);
-              setPositionNote("");
-              setPositionFound(false);
-              setOneClaimPerCycle(null);
-              clearRegistration();
+              clearForStakerChange();
             }}
             placeholder="ST… / SP…"
             autoComplete="off"
@@ -534,9 +654,9 @@ export function RegisterForm() {
           >
             {config.developerMode
               ? `This staker address looks like a ${
-                  config.network === "mainnet" ? "testnet/devnet" : "mainnet"
-                } principal (ST/SN vs SP/SM), but the app is on ${config.network}. Reads and transactions will likely fail until the address and network matches.`
-              : `Staker address does not match ${config.network}. Mainnet addresses start with SP or SM; testnet and devnet addresses start with ST or SN. Change the address, or enable developer mode to switch networks.`}
+                  config.network === "mainnet" ? "testnet" : "mainnet"
+                } principal, but the app is on ${config.network}.`
+              : `Staker address does not match ${config.network}. Change the address, or enable developer mode to switch networks.`}
           </p>
         )}
 
@@ -576,17 +696,42 @@ export function RegisterForm() {
           <FieldLabel help="The signer-manager smart contract associated with the staker. When registering, it must match the signer-manager stored in the pox-5 smart contract; loading staking details fills it from the chain.">
             Signer manager
           </FieldLabel>
-          <input
-            className="claims-input font-mono"
-            value={signerManager}
-            onChange={(e) => {
-              setSignerManager(e.target.value);
-              clearRegistration();
-            }}
-            placeholder="ST….signer-manager"
-            autoComplete="off"
-          />
+          {signerManagerVerified ? (
+            <input
+              className="claims-input font-mono"
+              value={signerManager}
+              readOnly
+              tabIndex={-1}
+              aria-readonly="true"
+            />
+          ) : (
+            <input
+              className="claims-input font-mono"
+              value={signerManager}
+              onChange={(e) => {
+                setSignerManager(e.target.value);
+                setTraitCheck(null);
+                setTraitCheckScope(null);
+                setTraitNote("");
+                clearRegistration();
+              }}
+              placeholder="ST….signer-manager"
+              autoComplete="off"
+            />
+          )}
         </label>
+
+        {checkingTrait && (
+          <p className="claims-field-hint">Checking trait compatibility…</p>
+        )}
+        {!checkingTrait &&
+          traitCheckIsCurrent &&
+          traitCheckBlocksRegistration(traitCheck) &&
+          traitNote && (
+          <p className="claims-error" role="alert">
+            {traitNote}
+          </p>
+        )}
 
         {registrationNote && (
           <p className="claims-note claims-note-ok">{registrationNote}</p>
@@ -844,7 +989,11 @@ export function RegisterForm() {
             type="button"
             className="claims-btn-primary"
             onClick={() => void handleRegister()}
-            disabled={submitting}
+            disabled={
+              submitting ||
+              checkingTrait ||
+              (traitCheckIsCurrent && traitCheckBlocksRegistration(traitCheck))
+            }
           >
             {!connected
               ? "Connect wallet to register"

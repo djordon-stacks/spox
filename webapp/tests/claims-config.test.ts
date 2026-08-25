@@ -6,10 +6,13 @@ import {
   feeMicroForClaimCount,
   formatStxFromMicro,
   parseStxToMicro,
+  isValidContractPrincipal,
   pox5ContractForNetwork,
+  principalAddressVersion,
   principalMatchesNetwork,
   resolveClaimsConfig,
   stacksExplorerContractUrlForConfig,
+  traitImplementationUrl,
 } from "../src/lib/claims-config";
 
 describe("formatStxFromMicro", () => {
@@ -67,8 +70,67 @@ describe("pox5ContractForNetwork", () => {
   });
 });
 
+describe("isValidContractPrincipal", () => {
+  it("accepts fully formed contract principals", () => {
+    expect(
+      isValidContractPrincipal(
+        "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP.signer-manager-4",
+      ),
+    ).toBe(true);
+    expect(
+      isValidContractPrincipal(
+        "SP2VMFSHP3EGCZNSQPAA31AJZKS7V70KXY0TT08RF.reward-claim-registry",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects incomplete or non-contract principals", () => {
+    expect(isValidContractPrincipal("ST3TB.signer-manager")).toBe(false);
+    expect(isValidContractPrincipal("foo.bar")).toBe(false);
+    expect(
+      isValidContractPrincipal(
+        "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP.",
+      ),
+    ).toBe(false);
+    expect(isValidContractPrincipal(".signer-manager")).toBe(false);
+    expect(
+      isValidContractPrincipal("STJYYA9MHWS5Z53WWNZN91AC1M4DB8P59E0YXED9"),
+    ).toBe(false);
+  });
+});
+
+describe("principalAddressVersion", () => {
+  it("decodes mainnet and testnet version bytes from c32check addresses", () => {
+    expect(
+      principalAddressVersion("SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7"),
+    ).toBe(22);
+    expect(
+      principalAddressVersion("SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4"),
+    ).toBe(20);
+    expect(
+      principalAddressVersion("ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP"),
+    ).toBe(26);
+    expect(
+      principalAddressVersion("SN3R84XZYA63QS28932XQF3G1J8R9PC3W76P9CSQS"),
+    ).toBe(21);
+    expect(
+      principalAddressVersion(
+        "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP.signer-manager-4",
+      ),
+    ).toBe(26);
+  });
+
+  it("returns null for invalid or incomplete addresses", () => {
+    expect(principalAddressVersion("")).toBeNull();
+    expect(principalAddressVersion("not-an-address")).toBeNull();
+    expect(
+      principalAddressVersion("ST2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7"),
+    ).toBeNull();
+  });
+});
+
 describe("principalMatchesNetwork", () => {
-  it("treats SP/SM as mainnet and ST/SN as testnet/devnet", () => {
+  it("treats mainnet version bytes as mainnet and all others as testnet/devnet", () => {
     expect(
       principalMatchesNetwork(
         "SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7",
@@ -77,13 +139,19 @@ describe("principalMatchesNetwork", () => {
     ).toBe(true);
     expect(
       principalMatchesNetwork(
-        "ST2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7",
+        "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4",
+        "mainnet",
+      ),
+    ).toBe(true);
+    expect(
+      principalMatchesNetwork(
+        "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP",
         "mainnet",
       ),
     ).toBe(false);
     expect(
       principalMatchesNetwork(
-        "ST2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7.signer-manager",
+        "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP.signer-manager",
         "devnet",
       ),
     ).toBe(true);
@@ -217,5 +285,24 @@ describe("stacksExplorerContractUrlForConfig", () => {
     expect(
       stacksExplorerContractUrlForConfig("not-a-contract", config),
     ).toBeNull();
+  });
+});
+
+describe("traitImplementationUrl", () => {
+  it("builds the node traits RPC path from registry and signer-manager ids", () => {
+    const config = resolveClaimsConfig(true, {
+      network: "testnet",
+      claimsContract:
+        "ST205D2HQCZY78TJ57FQN0K74A0FPM4Z9RBXGWAKB.reward-claim-registry",
+    });
+
+    expect(
+      traitImplementationUrl(
+        config,
+        "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP.signer-manager-4",
+      ),
+    ).toBe(
+      "https://api.testnet.hiro.so/v2/traits/ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP/signer-manager-4/ST205D2HQCZY78TJ57FQN0K74A0FPM4Z9RBXGWAKB/reward-claim-registry/reward-claim-signer-manager-trait",
+    );
   });
 });
