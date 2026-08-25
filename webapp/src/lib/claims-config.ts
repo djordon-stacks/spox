@@ -4,6 +4,7 @@ import {
   type StacksNetwork,
   type StacksNetworkName,
 } from "@stacks/network";
+import { AddressVersion, createAddress, parsePrincipalString } from "@stacks/transactions";
 
 export type ClaimsNetworkName = "mainnet" | "testnet" | "devnet";
 
@@ -29,18 +30,39 @@ export function pox5ContractForNetwork(network: ClaimsNetworkName): string {
 }
 
 /**
+ * Parse the address version byte from a standard or contract principal.
+ * Returns null when the input is empty or not a valid c32check address.
+ */
+export function principalAddressVersion(address: string): number | null {
+  const base = address.trim().split(".")[0] ?? "";
+  if (!base) return null;
+  try {
+    return createAddress(base).version;
+  } catch {
+    return null;
+  }
+}
+
+function isMainnetAddressVersion(version: number): boolean {
+  return (
+    version === AddressVersion.MainnetSingleSig ||
+    version === AddressVersion.MainnetMultiSig
+  );
+}
+
+/**
  * Infer whether a Stacks principal belongs on mainnet or testnet/devnet
- * from its address version prefix (SP/SM vs ST/SN). Contract principals are
- * checked on the address before the first `.`. Returns null when the prefix
- * is missing or unrecognized (incomplete input).
+ * from its c32check version byte. Only mainnet single-sig (22) and multi-sig
+ * (20) count as mainnet; all other version bytes are testnet. Contract
+ * principals use the address portion before the first `.`. Returns null when
+ * the address is missing or not yet a valid c32check string.
  */
 export function stacksAddressNetworkKind(
   address: string,
 ): "mainnet" | "testnet" | null {
-  const base = address.trim().split(".")[0]?.toUpperCase() ?? "";
-  if (base.startsWith("SP") || base.startsWith("SM")) return "mainnet";
-  if (base.startsWith("ST") || base.startsWith("SN")) return "testnet";
-  return null;
+  const version = principalAddressVersion(address);
+  if (version === null) return null;
+  return isMainnetAddressVersion(version) ? "mainnet" : "testnet";
 }
 
 /**
@@ -233,6 +255,40 @@ export function splitContractId(
     address: trimmed.slice(0, dot),
     name: trimmed.slice(dot + 1),
   };
+}
+
+/**
+ * Whether `contractId` is a fully formed contract principal: valid c32check
+ * address and non-empty contract name. Standard principals (no `.`) are rejected.
+ */
+export function isValidContractPrincipal(contractId: string): boolean {
+  const trimmed = contractId.trim();
+  if (!trimmed.includes(".")) return false;
+  try {
+    const parsed = parsePrincipalString(trimmed) as {
+      contractName?: { content?: string };
+    };
+    const name = parsed.contractName?.content;
+    return typeof name === "string" && name.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Trait defined in the reward-claim-registry contract. */
+export const REWARD_CLAIM_SIGNER_MANAGER_TRAIT =
+  "reward-claim-signer-manager-trait";
+
+/** Stacks node URL to check whether a contract implements the registry trait. */
+export function traitImplementationUrl(
+  config: Pick<ClaimsConfig, "apiUrl" | "claimsContract">,
+  implementerContractId: string,
+): string | null {
+  const implementer = splitContractId(implementerContractId);
+  const traitDef = splitContractId(config.claimsContract);
+  if (!implementer || !traitDef) return null;
+  const base = config.apiUrl.replace(/\/$/, "");
+  return `${base}/v2/traits/${implementer.address}/${implementer.name}/${traitDef.address}/${traitDef.name}/${REWARD_CLAIM_SIGNER_MANAGER_TRAIT}`;
 }
 
 export function stacksExplorerTxUrlForConfig(

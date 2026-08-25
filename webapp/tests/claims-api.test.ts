@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { Cl, cvToHex } from "@stacks/transactions";
-import { fetchFeePerClaim, fetchPosition, fetchRegistration } from "../src/lib/claims-api";
+import { fetchFeePerClaim, fetchPosition, fetchRegistration, fetchSignerManagerTraitCheck } from "../src/lib/claims-api";
 import type { ClaimsConfig } from "../src/lib/claims-config";
 import { resolveClaimsConfig } from "../src/lib/claims-config";
 
@@ -12,7 +12,12 @@ function devnetConfig(): ClaimsConfig {
   });
 }
 
-function mockFetch(impl: () => Promise<Response> | never) {
+function mockFetch(
+  impl: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response> | Response | never,
+) {
   vi.stubGlobal("fetch", vi.fn(impl));
 }
 
@@ -40,10 +45,11 @@ describe("read-only call errors", () => {
       }),
     );
 
-    const error = await fetchFeePerClaim(devnetConfig(), "ST1234").catch(
-      (e: Error) => e,
+    const result = await fetchFeePerClaim(devnetConfig(), "ST1234").catch(
+      (e: unknown) => e,
     );
-
+    expect(result).toBeInstanceOf(Error);
+    const error = result as Error;
     expect(error.message).toMatch(/registry contract has not been deployed/i);
     expect(error.message).not.toMatch(/Cannot reach/);
   });
@@ -259,5 +265,49 @@ describe("registry registration lookup", () => {
       String(fetchMock.mock.calls[1]?.[1]?.body ?? "{}"),
     ) as { arguments?: string[] };
     expect(heightBody.arguments?.[0]).toBe(cvToHex(Cl.uint(241)));
+  });
+});
+
+describe("signer-manager trait check", () => {
+  const validSigner =
+    "ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP.signer-manager-4";
+
+  it("returns supported when the node reports trait implementation", async () => {
+    mockFetch(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe(
+        "http://localhost:3999/v2/traits/ST3TB3AJ0XMZ9S6CGY2CQ6R06H1Z6DJQ1SK5QGMWP/signer-manager-4/ST2SBXRBJJTH7GV5J93HJ62W2NRRQ46XYBK92Y039/reward-claim-registry/reward-claim-signer-manager-trait",
+      );
+      return Response.json({ is_implemented: true });
+    });
+
+    await expect(
+      fetchSignerManagerTraitCheck(devnetConfig(), validSigner),
+    ).resolves.toBe("supported");
+  });
+
+  it("returns not-implemented when the contract exists but lacks the trait", async () => {
+    mockFetch(async () => Response.json({ is_implemented: false }));
+
+    await expect(
+      fetchSignerManagerTraitCheck(devnetConfig(), validSigner),
+    ).resolves.toBe("not-implemented");
+  });
+
+  it("returns not-found on HTTP 404", async () => {
+    mockFetch(async () => new Response(null, { status: 404 }));
+
+    await expect(
+      fetchSignerManagerTraitCheck(devnetConfig(), validSigner),
+    ).resolves.toBe("not-found");
+  });
+
+  it("returns null for incomplete contract principals without calling the API", async () => {
+    const fetchMock = vi.fn();
+    mockFetch(fetchMock);
+
+    await expect(
+      fetchSignerManagerTraitCheck(devnetConfig(), "ST3TB.signer-manager"),
+    ).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
