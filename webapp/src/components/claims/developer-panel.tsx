@@ -1,0 +1,124 @@
+"use client";
+
+import { useClaimsConfig } from "@/components/claims/claims-config-provider";
+import type { ClaimsNetworkName } from "@/lib/claims-config";
+import {
+  claimsContractForNetwork,
+  defaultApiUrlForNetwork,
+} from "@/lib/claims-config";
+
+const NETWORKS: ClaimsNetworkName[] = ["devnet", "testnet", "mainnet"];
+
+export function DeveloperPanel() {
+  const { config, setDeveloperMode, updateOverrides, resetOverrides } =
+    useClaimsConfig();
+  const networkApiDefault = defaultApiUrlForNetwork(config.network);
+  const networkContractDefault = claimsContractForNetwork(config.network);
+
+  if (!config.developerMode) {
+    return (
+      <div className="claims-dev-collapsed">
+        <button
+          type="button"
+          className="claims-dev-toggle"
+          onClick={() => setDeveloperMode(true)}
+        >
+          Developer mode
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="claims-dev-panel" aria-label="Developer settings">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h2 className="claims-dev-title">Developer settings</h2>
+        <button
+          type="button"
+          className="claims-dev-toggle"
+          onClick={() => setDeveloperMode(false)}
+        >
+          Turn off
+        </button>
+      </div>
+      <p className="claims-hint mb-4">
+        These overrides will replace the defaults while developer mode is on.
+        Changing network switches to that network&apos;s Stacks API and registry
+        contract unless you set custom values.
+      </p>
+
+      <div className="space-y-4">
+        <label className="claims-field">
+          <span>Network</span>
+          <select
+            className="claims-input"
+            value={config.network}
+            onChange={(e) =>
+              updateOverrides({
+                network: e.target.value as ClaimsNetworkName,
+                // Drop prior custom API / contract so network defaults apply.
+                apiUrl: "",
+                claimsContract: "",
+              })
+            }
+          >
+            {NETWORKS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="claims-field">
+          <span>Stacks API URL</span>
+          <input
+            className="claims-input font-mono"
+            type="url"
+            placeholder={networkApiDefault}
+            value={config.overrides.apiUrl ?? ""}
+            onChange={(e) => updateOverrides({ apiUrl: e.target.value })}
+          />
+          <span className="claims-field-hint">
+            Leave blank to use the {config.network} default (
+            <code>{networkApiDefault}</code>).
+          </span>
+        </label>
+
+        <label className="claims-field">
+          <span>Claims registry contract</span>
+          <input
+            className="claims-input font-mono"
+            type="text"
+            placeholder={
+              networkContractDefault || "ST….reward-claim-registry"
+            }
+            value={config.overrides.claimsContract ?? ""}
+            onChange={(e) =>
+              updateOverrides({ claimsContract: e.target.value })
+            }
+          />
+          <span className="claims-field-hint">
+            {networkContractDefault
+              ? `Leave blank for the ${config.network} build default (${networkContractDefault}).`
+              : `No build default for ${config.network}. Set NEXT_PUBLIC_CLAIMS_REGISTRY_CONTRACT_${config.network.toUpperCase()} or enter a contract here.`}
+          </span>
+        </label>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            type="button"
+            className="claims-btn-ghost"
+            onClick={resetOverrides}
+          >
+            Reset overrides
+          </button>
+          <p className="claims-hint self-center">
+            Active: {config.network} · {config.apiUrl}
+            {config.claimsContract ? ` · ${config.claimsContract}` : ""}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}

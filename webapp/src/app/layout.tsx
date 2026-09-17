@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { Fraunces, Figtree } from "next/font/google";
+import { ClaimsConfigProvider } from "@/components/claims/claims-config-provider";
 import { WalletProvider } from "@/components/wallet-provider";
 import "./globals.css";
 
@@ -10,9 +12,22 @@ const jetbrainsMono = localFont({
   weight: "100 800",
 });
 
+const display = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-claims-display",
+  display: "swap",
+});
+
+const sans = Figtree({
+  subsets: ["latin"],
+  variable: "--font-claims-sans",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "sBTC Autobridge",
-  description: "Receive your BTC as sBTC",
+  title: "spox · Register for reward claims",
+  description:
+    "Register your Stacks staking position with the reward-claim registry.",
 };
 
 export default function RootLayout({
@@ -21,9 +36,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={jetbrainsMono.variable}>
-      <body className="font-sans bg-grid">
-        <WalletProvider>{children}</WalletProvider>
+    <html
+      lang="en"
+      className={`${jetbrainsMono.variable} ${display.variable} ${sans.variable}`}
+    >
+      <body>
+        <WalletProvider>
+          <ClaimsConfigProvider>
+            <div className="claims-theme">{children}</div>
+          </ClaimsConfigProvider>
+        </WalletProvider>
       </body>
     </html>
   );
